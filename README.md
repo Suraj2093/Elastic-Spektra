@@ -3,31 +3,37 @@
 
 ## Deployment
 
-The solution can be deployed to customer Organizational Units (OUs) so it will collect logs from all the child accounts. We have considered the following inputs for log ingestion 
+The solution can be deployed to customer member accounts which are part of the AWS Organization so it will collect logs accordingly. We have considered the following inputs for log ingestion 
 
-- CloudTrail - Will be created by the Control Tower deployed in the Master Account
-- S3 Access logs - Deployed in the Member account
-- Elastic Load Balancer - Deployed in the Member account
-- VPC Flow logs - Deployed in the Member account
-- Kinesis Data Stream - Deployed in the Member account
+- CloudTrail logs
+- S3 Access logs
+- ELB logs
+- VPC Flow logs
+- Kinesis Data Stream
 
-The service catalog will be deploying the solution as per the resources deployed in the member account and user requirements of the logs that are to be ingested into the Elastic Cloud. Firstly the CFT will deploy resources in the Log-Archive account. Please note that the deployment of the CFT should be initiated from the Master account, all the required resources will be deployed to the Log Archive account and the member account will be created by using the CloudFormation Stackset.
+The service catalog will be deploying the solution as per the resources deployed in the member account and user requirements of the logs that are to be ingested into the Elastic Cloud. Firstly a CFT will deploy resources in the Log-Archive account and then another CFT will deploy the required resources in the member account. Please note that the deployment of the CFT should be initiated from the Master account and all the required resources will be deployed to the Log Archive account and the member account using the CloudFormation Stackset.
 
 ### To deploy this mechanism:
 
-In the Log-Archive account, the Service catalog will deploy S3 buckets that will collect the logs from the required input resources and SQS queues to ingest the logs from S3 buckets into Elastic Cloud. Following AWS CloudFormation Templates will be deployed in the Log Archive account.
+In the Log Archive account, the Service Catalog will be deploying the following resources using the CFT elastic-queue-bucket-forwarder.yaml.
 
-- elastic-queues-and-buckets: This template deploys the following resources.
-  - 2 S3 buckets to collect the S3 access logs and the Elastic Load Balancer logs from the member accounts
-  - 2 SQS Queues for ingesting logs from S3 buckets into Elastic Cloud. This will ingest S3 access logs and the ELB logs from the respective buckets
-  - Policies for the S3 buckets and the SQS Queues
-  - KMS key to encrypt the SQS queues messages
+- S3 buckets to collect the S3 access logs from the member accounts
+- S3 buckets to collect the Elastic Load Balancer logs from the member accounts
+- S3 bucket to collect the VPC Flow logs from the member accounts
+- SQS Queue to notify Elastic Serverless Forwarder for VPC Flow Logs, Elastic Load Balancer logs, and S3 Access logs from the respective S3 buckets.
+- Policies for the S3 buckets and the SQS Queues.
+- KMS key to encrypt the SQS queue messages
+- Elastic Serverless Forwarder to ingest the logs to Elastic Cloud.
+- S3 bucket for storing the config.yaml file required for Elastic integration
+- Bootstrap lambda function which will run a Python script to create config file required for elastic integration and upload the file to S3 bucket
+- Policies for the S3 bucket (used for storing the config.yaml file) and Role and policy for bootstrap lambda.
  
-- elastic-vpcflow-buckets-queues: This template deploys the following resources.
-  - S3 bucket to collect the VPC Flow logs from the member accounts
-  - SQS Queue for ingesting logs from S3 buckets into Elastic Cloud. This will ingest the VPC Flow logs from the respective bucket
-  - Policies for the S3 bucket and the SQS Queue
-  - Elastic Serverless Forwarder
-  - S3 bucket for storing the config.yaml file required for Elastic integration
-  - Bootstrap lambda which will deploy a Python script to create the config file and upload it to S3 bucket
+In the Member account, the Service Catalog will be deploying the following resources using the CFT elastic-buckets-kinesis-member.yaml.
+
+- S3 buckets to store the VPC flow logs and S3 access logs. These logs will be replicated to the buckets in the log archive account.
+- Policies for the S3 buckets
+- If the user wants to ingest Kinesis Data Streams to Elastic Cloud, then the following resources will be deployed. Please note that in this case the Kinesis Data Stream should be deployed in the member account.
+  - S3 bucket for storing the cofig.yaml file. 
+  - Bootstrap Lambda function which will run a Python script to create config.yaml file required for elastic integration and upload the file to S3 bucket. 
+  - Elastic Serverless Forwarder to ingest the Kinesis to Elastic Cloud.
   - Policies for the S3 bucket (used for storing the config.yaml file) and Role and policy for bootstrap lambda.
