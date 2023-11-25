@@ -1,5 +1,15 @@
 # Elastic-Spektra
 
+## Architecture
+
+The following architecture diagram outlines high-level components involved in ingesting logs from various AWS Services to Elastic Cloud.
+
+1. Master Account: The AWS Master account will be primarily used as a deployment entry point for solution, AWS Control Tower management and to host Elastic forwarder for AWS Directory services-related logs, if enabled.
+2. Log Archive Account: This account will be primarily used to store the logs in various S3 buckets through control tower integration, it will also host the primary Elastic Serverless forwarder and SQS to ingest the logs from S3 buckets into Elastic Cloud.
+3. Member Account(s): One or more member accounts may contain AWS resources, sending logs to the log-archive account. Member accounts may also host the Elastic serverless forwarder for Kinesis data stream/cloud watch logs ingestion to Elastic Cloud if required.
+
+!img
+
 ## Pre-requites
 
 - You need to setup the Control Tower in the AWS account. This will setup the Log Archive Account and deploy the CloudTrail.
