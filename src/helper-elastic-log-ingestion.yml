@@ -1,1 +1,1111 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Creates logging buckets for S3 access logs, ELB access logs, replicated to central log-archive account.
+             
+Parameters:
+    AWSOrganizationID:
+      Type: String
+      Description: >
+        The ID of your AWS Organization.
+        Example: o-0123456789abcdef0
+      
+    LoggingAccountId:
+      Type: 'String'
+      Description: AWS Account Id of the log-archive account.
+      AllowedPattern: "[0-9]{12}"
+      
+    LoggingRegion:
+      Type: 'String'
+      Description: >
+        What region are the log buckets in? Region of the central logging bucket created in the Log archive account.
+        Example: us-east-1 (If the central logging bucket are in US East (N. Virginia) us-east-1 AWS Region
+        
+    ElasticCloudID:
+      Type: String
+      Description: Cloud ID of Elastic Cluster Deployment
+      NoEcho: true
 
+    ElasticAPIKey:
+      Type: String
+      Description: RESTful API to provide access to deployment CRUD actions
+      NoEcho: true
+      
+    IngestKinesisLogs:
+      Type: String
+      Default: "No"
+      AllowedValues:
+      - "Yes"
+      - "No"
+      Description: "Do you want to ingest Kinesis data streams to the Elastic Cloud? (Choose 'Yes' or 'No'). If yes, make sure you have Kinesis data stream already created."
+
+    KinesisDataStreamArn:
+      Type: CommaDelimitedList
+      Default: ""
+      Description: "Comma delimited list of Kinesis Data Stream ARNs (Provide the value only if you want to ingest the Kinesis data streams to the Elastic Cloud)"
+      
+    IngestCloudWatchLogs:
+      Type: String
+      Default: "No"
+      AllowedValues:
+      - "Yes"
+      - "No"
+      Description: "Do you want to ingest CloudWatch Log Group logs to the Elastic Cloud? (Choose 'Yes' or 'No'). If yes, provide log group ARNs."
+
+    CloudWatchLogGroupArns:
+      Type: CommaDelimitedList
+      Default: ""
+      Description: "Comma delimited list of CloudWatch Log Group ARNs (Provide the value only if you want to ingest the CloudWatch Log Group logs to the Elastic Cloud)"
+      
+    DeployInVPC:
+      Type: String
+      Description: >
+        'If you want to ingest either Kinesis data Streams or the CloudWatch logs to Elastic Cloud, an Elastic Serverless Forwarder will be deployed. Do you want to deploy this Elastic Serverless Forwarder in a VPC? (Enter "yes" or "no").
+        Note: If yes, make sure a VPC is already been created in the region before deploying this CFT.' 
+      Default: 'No'
+      AllowedValues: ['Yes', 'No']
+
+    VPCId:
+      Type: String
+      Description: 'Enter the VPC ID in which you want to deploy the Elastic Serverless Forwarder. Provide the value only if you want to deploy the Elastic Serverless Forwarder in the VPC'
+
+    SubnetIds:
+      Type: CommaDelimitedList
+      Description: 'Enter the Subnet IDs (comma-separated) for the Elastic Serverless Forwarder. Provide the value only if you want to deploy the Elastic Serverless Forwarder in the VPC'
+      ConstraintDescription: 'Please enter a valid list of Subnet IDs.'
+    
+Conditions:
+  ShouldIngestKinesisDataStream: !Equals [!Ref IngestKinesisLogs, "Yes"]
+  ShouldIngestCloudWatchLogs: !Equals [!Ref IngestCloudWatchLogs, "Yes"]
+  ShouldDeployElasticForwarderInVPC: !Equals [!Ref DeployInVPC, "Yes"]
+  
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: Log Archive Account Details
+      Parameters:
+      - LoggingAccountId
+      - LoggingRegion
+    - Label:
+        default: AWS Organization ID
+      Parameters:
+      - AWSOrganizationID
+    - Label:
+        default: Elastic Cluster Deployment Details
+      Parameters:
+      - ElasticCloudID
+      - ElasticAPIKey
+    - Label:
+        default: Ingest EC2 Instance Logs
+      Parameters:
+      - IngestEC2Logs
+      - KibanaURL
+      - EnrollmentToken
+    - Label:
+        default: Ingest kinesis data stream (Optional)
+      Parameters:
+      - IngestKinesisLogs
+      - KinesisDataStreamArn
+    - Label:
+        default: Ingest CloudWatch LogGroup Logs (Optional)
+      Parameters:
+      - IngestCloudWatchLogs
+      - CloudWatchLogGroupArns
+    - Label:
+        default: Deploy Elastic Forwarder in a VPC (Optional)
+      Parameters:
+      - DeployInVPC
+      - VPCId
+      - SubnetIds
+    ParameterLabels:
+      ElasticCloudID:
+        default: Elastic Cloud ID
+      ElasticAPIKey:
+        default: Elastic API Key
+      LoggingAccountId:
+        default: Account ID
+      LoggingRegion:
+        default: Logging Region
+      AWSOrganizationID:
+        default: Organization ID
+      IngestEC2Logs:
+        default: Ingest EC2 Logs
+      KibanaURL:
+        default: Kibana URL
+      EnrollmentToken:
+        default: Enrollment Token
+      IngestKinesisLogs:
+        default: Ingest Kinesis Logs
+      KinesisDataStreamArn:
+        default: Kinesis Data Stream ARNs
+      IngestCloudWatchLogs:
+        default: Ingest CloudWatch Logs
+      CloudWatchLogGroupArns:
+        default: CloudWatch LogGroup ARNs
+      DeployInVPC:
+        default: Deploy Serverless Forwarder In VPC
+      VPCId:
+        default: VPC ID
+      SubnetIds:
+        default: Subnet IDs
+
+Mappings:
+  VPCServiceName:
+    af-south-1: 
+      service: com.amazonaws.vpce.us-east-1.vpce-svc-0e42e1e06ed010238
+    ap-east-1:
+      service: com.amazonaws.vpce.ap-east-1.vpce-svc-0f96fbfaf55558d5c
+    ap-northeast-1:
+      service: com.amazonaws.vpce.ap-northeast-1.vpce-svc-0e1046d7b48d5cf5f
+    ap-northeast-2:
+      service: com.amazonaws.vpce.ap-northeast-2.vpce-svc-0d90cf62dae682b84
+    ap-south-1:
+      service: com.amazonaws.vpce.ap-south-1.vpce-svc-0e9c1ae5caa269d1b
+    ap-southeast-1:
+      service: com.amazonaws.vpce.ap-southeast-1.vpce-svc-0cbc6cb9bdb683a95
+    ap-southeast-2:
+      service: com.amazonaws.vpce.ap-southeast-2.vpce-svc-0cde7432c1436ef13
+    ca-central-1:
+      service: com.amazonaws.vpce.ca-central-1.vpce-svc-0d3e69dd6dd336c28
+    eu-central-1:
+      service: com.amazonaws.vpce.eu-central-1.vpce-svc-081b2960e915a0861
+    eu-south-1:
+      service: com.amazonaws.vpce.eu-south-1.vpce-svc-03d8fc8a66a755237
+    eu-north-1:
+      service: com.amazonaws.vpce.eu-north-1.vpce-svc-05915fc851f802294
+    eu-west-1:
+      service: com.amazonaws.vpce.eu-west-1.vpce-svc-01f2afe87944eb12b
+    eu-west-2:
+      service: com.amazonaws.vpce.eu-west-2.vpce-svc-0e42a2c194c97a1d0
+    eu-west-3:
+      service: com.amazonaws.vpce.eu-west-3.vpce-svc-0d6912d10db9693d1
+    me-south-1:
+      service: com.amazonaws.vpce.me-south-1.vpce-svc-0381de3eb670dcb48
+    sa-east-1:
+      service: com.amazonaws.vpce.sa-east-1.vpce-svc-0b2dbce7e04dae763
+    us-east-1: 
+      service: com.amazonaws.vpce.us-east-1.vpce-svc-0e42e1e06ed010238
+    us-east-2:
+      service: com.amazonaws.vpce.us-east-2.vpce-svc-02d187d2849ffb478
+    us-west-1:
+      service: com.amazonaws.vpce.us-west-1.vpce-svc-00def4a16a26cb1b4
+    us-west-2:
+      service: com.amazonaws.vpce.us-west-2.vpce-svc-0e69febae1fb91870
+  PrivateHostedZoneDNSName:
+    af-south-1:
+      HostedZone: vpce.af-south-1.aws.elastic-cloud.com
+    ap-east-1:
+      HostedZone: vpce.ap-east-1.aws.elastic-cloud.com
+    ap-northeast-1:
+      HostedZone: vpce.ap-northeast-1.aws.elastic-cloud.com
+    ap-northeast-2:
+      HostedZone: vpce.ap-northeast-2.aws.elastic-cloud.com
+    ap-south-1:
+      HostedZone: vpce.ap-south-1.aws.elastic-cloud.com
+    ap-southeast-1:
+      HostedZone: vpce.ap-southeast-1.aws.elastic-cloud.com
+    ap-southeast-2:
+      HostedZone: vpce.ap-southeast-2.aws.elastic-cloud.com
+    ca-central-1:
+      HostedZone: vpce.ca-central-1.aws.elastic-cloud.com
+    eu-central-1:
+      HostedZone: vpce.eu-central-1.aws.elastic-cloud.com
+    eu-south-1:
+      HostedZone: vpce.eu-south-1.aws.elastic-cloud.com
+    eu-north-1:
+      HostedZone: vpce.eu-north-1.aws.elastic-cloud.com
+    eu-west-1:
+      HostedZone: vpce.eu-west-1.aws.elastic-cloud.com
+    eu-west-2:
+      HostedZone: vpce.eu-west-2.aws.elastic-cloud.com
+    eu-west-3:
+      HostedZone: vpce.eu-west-3.aws.elastic-cloud.com
+    me-south-1:
+      HostedZone: vpce.me-south-1.aws.elastic-cloud.com
+    sa-east-1:
+      HostedZone: vpce.sa-east-1.aws.elastic-cloud.com
+    us-east-1: 
+      HostedZone: vpce.us-east-1.aws.elastic-cloud.com
+    us-east-2:
+      HostedZone: vpce.us-east-2.aws.elastic-cloud.com
+    us-west-1:
+      HostedZone: vpce.us-west-1.aws.elastic-cloud.com
+    us-west-2:
+      HostedZone: vpce.us-west-2.aws.elastic-cloud.com        
+
+Resources:
+  ElasticSecret:
+    Type: AWS::SecretsManager::Secret
+    DependsOn: ElasticSSMSecretEncryptionKey
+    Properties:
+      Name: !Sub "ElasticCloudSecret-${AWS::StackName}"
+      KmsKeyId: !Ref ElasticSSMSecretEncryptionKey
+      SecretString: !Sub |
+        {
+          "ElasticCloudID": "${ElasticCloudID}",
+          "APIKey": "${ElasticAPIKey}"
+        }
+        
+  ElasticSSMSecretEncryptionKey:     # Create a KMS Key to encrypt the secrets in AWS SSM store
+    Type: AWS::KMS::Key
+    Properties:
+      Description: Encrypt the secrets stored in the SSM Store.
+      Enabled: true
+      EnableKeyRotation: true
+      KeyUsage: ENCRYPT_DECRYPT
+      PendingWindowInDays: 7
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: sqs-use
+        Statement:
+          - Sid: Key Admin Usage
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: 
+              - 'kms:*'
+            Resource: '*'
+          - Sid: Elastic-Lambda-Permission
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - 'kms:GenerateDataKey*'
+              - 'kms:Decrypt'
+            Resource: '*'
+
+  ElasticSSMSecretKMSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/ElasticSSMSecretEncryptionKey
+      TargetKeyId: !Ref ElasticSSMSecretEncryptionKey
+        
+  S3ReplicationRole:        #Role for S3 service to replicated objects to Log Archive S3 Bucket
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Action: 
+              - "sts:AssumeRole"
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "s3.amazonaws.com"
+      Path: "/"
+      RoleName: "elastic-AWS-S3-Replication"
+
+  S3ReplicationRolePolicy: 
+    Type: "AWS::IAM::ManagedPolicy"
+    Properties: 
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Action:
+              - s3:ListBucket
+              - s3:GetBucketLocation
+              - s3:GetReplicationConfiguration
+              - s3:GetObjectVersionForReplication
+              - s3:GetObjectVersion
+              - s3:GetObjectVersionAcl
+              - s3:GetObjectVersionTagging
+              - s3:GetObjectRetention
+              - s3:GetObjectLegalHold
+            Effect: "Allow"
+            Resource:
+              - arn:aws:s3:::elastic-central-elb-access-logs-*/*
+              - arn:aws:s3:::elastic-central-waf-access-logs-*/*
+              - arn:aws:s3:::elastic-central-emr-access-logs-*/*
+              - arn:aws:s3:::elastic-central-nf-access-logs-*/*
+              - arn:aws:s3:::elastic-aws-emr-local-logs*/*
+              - arn:aws:s3:::elastic-aws-emr-local-logs*
+              - arn:aws:s3:::elastic-aws-elb-local-logs-*/*
+              - arn:aws:s3:::elastic-aws-elb-local-logs-*
+              - arn:aws:s3:::aws-waf-logs-elastic-local-logs-*/*
+              - arn:aws:s3:::aws-waf-logs-elastic-local-logs-*
+              - arn:aws:s3:::elastic-aws-nf-local-logs-*/*
+              - arn:aws:s3:::elastic-aws-nf-local-logs-*
+              - arn:aws:s3:::elastic-aws-cloudfront-local-logs-*/*
+              - arn:aws:s3:::elastic-aws-cloudfront-local-logs-*
+              - arn:aws:s3:::elastic-aws-cloudfront-local-logs-*/*
+              - arn:aws:s3:::elastic-aws-cloudfront-local-logs-*
+              - arn:aws:s3:::elastic-central-cloudfront-access-logs-*/*
+              - arn:aws:s3:::elastic-central-cloudfront-access-logs-*
+          - 
+            Action:
+              - s3:ReplicateObject
+              - s3:ReplicateDelete
+              - s3:ReplicateTags
+              - s3:ObjectOwnerOverrideToBucketOwner
+            Effect: "Allow"
+            Resource:
+              - arn:aws:s3:::elastic-central-elb-access-logs-*/*
+              - arn:aws:s3:::elastic-central-waf-access-logs-*/*
+              - arn:aws:s3:::elastic-central-emr-access-logs-*/*
+              - arn:aws:s3:::elastic-central-nf-access-logs-*/*
+              - arn:aws:s3:::elastic-central-cloudfront-access-logs-*/*
+            Condition:
+              StringEquals:
+                aws:PrincipalOrgID:
+                  - !Ref AWSOrganizationID
+      ManagedPolicyName: "Elastic-AWS-S3-Replication"
+      Roles: 
+        - 
+          Ref: "S3ReplicationRole"
+
+
+  S3ElbLocalAccessLogBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    DependsOn: S3LocalLoggingBucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: "AES256"
+      BucketName: !Sub elastic-aws-elb-local-logs-${AWS::AccountId}-${AWS::Region}
+      LifecycleConfiguration:
+        Rules:
+          - ExpirationInDays: 1
+            Id: Remove replicated logs after 1 day
+            NoncurrentVersionExpirationInDays: 1
+            Status: Enabled
+      LoggingConfiguration:
+        DestinationBucketName: !Ref S3LocalLoggingBucket
+        LogFilePrefix: !Sub "elastic-aws-elb-local-logs-${AWS::AccountId}-${AWS::Region}/"
+      ReplicationConfiguration:
+        Role: !Sub arn:aws:iam::${AWS::AccountId}:role/elastic-AWS-S3-Replication
+        Rules:
+          - Prefix: ""
+            Status: "Enabled"
+            Destination: 
+              AccessControlTranslation:
+                Owner: Destination
+              Bucket: !Sub arn:aws:s3:::elastic-central-elb-access-logs-${LoggingAccountId}-${LoggingRegion}
+              Account: !Ref LoggingAccountId      
+      VersioningConfiguration:
+        Status: Enabled
+
+  S3ElbAccessLogBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3ElbLocalAccessLogBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: AWSBucketPermissionsCheck
+            Action: s3:PutObject
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Resource:
+              - !Sub "arn:aws:s3:::${S3ElbLocalAccessLogBucket}/*"
+          - Sid: LogDelivery
+            Action: s3:PutObject
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Resource:
+              - !Sub "arn:aws:s3:::${S3ElbLocalAccessLogBucket}/*"
+            Condition:
+              StringEquals:
+                "s3:x-amz-acl": "bucket-owner-full-control"
+          - Sid: LogDeliveryPermissionCheck
+            Action: s3:GetBucketAcl
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Resource:
+              - !Sub "arn:aws:s3:::${S3ElbLocalAccessLogBucket}"
+              
+  S3WafLocalAccessLogBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    DependsOn: S3LocalLoggingBucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: "AES256"
+      BucketName: !Sub aws-waf-logs-elastic-local-logs-${AWS::AccountId}-${AWS::Region}
+      LifecycleConfiguration:
+        Rules:
+          - ExpirationInDays: 1
+            Id: Remove replicated logs after 1 day
+            NoncurrentVersionExpirationInDays: 1
+            Status: Enabled
+      LoggingConfiguration:
+        DestinationBucketName: !Ref S3LocalLoggingBucket
+        LogFilePrefix: !Sub "aws-waf-logs-elastic-local-logs-${AWS::AccountId}-${AWS::Region}/"
+      ReplicationConfiguration:
+        Role: !Sub arn:aws:iam::${AWS::AccountId}:role/elastic-AWS-S3-Replication
+        Rules:
+          - Prefix: ""
+            Status: "Enabled"
+            Destination:
+              AccessControlTranslation:
+                Owner: Destination
+              Bucket: !Sub arn:aws:s3:::elastic-central-waf-access-logs-${LoggingAccountId}-${LoggingRegion}
+              Account: !Ref LoggingAccountId
+      VersioningConfiguration:
+        Status: Enabled
+
+  S3WafAccessLogBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3WafLocalAccessLogBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: AWSBucketPermissionsCheck
+            Action: s3:PutObject
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Resource:
+              - !Sub "arn:aws:s3:::${S3WafLocalAccessLogBucket}/*"
+          - Sid: LogDelivery
+            Action: s3:PutObject
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Resource:
+              - !Sub "arn:aws:s3:::${S3WafLocalAccessLogBucket}/*"
+            Condition:
+              StringEquals:
+                "s3:x-amz-acl": "bucket-owner-full-control"
+          - Sid: LogDeliveryPermissionCheck
+            Action: s3:GetBucketAcl
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Resource:
+              - !Sub "arn:aws:s3:::${S3WafLocalAccessLogBucket}"
+
+  S3EmrLocalAccessLogBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    DependsOn: S3LocalLoggingBucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: "AES256"
+      BucketName: !Sub elastic-aws-emr-local-logs-${AWS::AccountId}-${AWS::Region}
+      LifecycleConfiguration:
+        Rules:
+          - ExpirationInDays: 1
+            Id: Remove replicated logs after 1 day
+            NoncurrentVersionExpirationInDays: 1
+            Status: Enabled
+      LoggingConfiguration:
+        DestinationBucketName: !Ref S3LocalLoggingBucket
+        LogFilePrefix: !Sub "elastic-aws-emr-local-logs-${AWS::AccountId}-${AWS::Region}/"
+      ReplicationConfiguration:
+        Role: !Sub arn:aws:iam::${AWS::AccountId}:role/elastic-AWS-S3-Replication
+        Rules:
+          - Prefix: ""
+            Status: "Enabled"
+            Destination: 
+              AccessControlTranslation:
+                Owner: Destination
+              Bucket: !Sub arn:aws:s3:::elastic-central-emr-access-logs-${LoggingAccountId}-${LoggingRegion}
+              Account: !Ref LoggingAccountId
+      VersioningConfiguration:
+        Status: Enabled
+
+  S3EmrAccessLogBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3EmrLocalAccessLogBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: AWSBucketPermissionsCheck
+            Action: s3:PutObject
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Resource:
+              - !Sub "arn:aws:s3:::${S3EmrLocalAccessLogBucket}/*"
+          - Sid: LogDelivery
+            Action: s3:PutObject
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Resource:
+              - !Sub "arn:aws:s3:::${S3EmrLocalAccessLogBucket}/*"
+            Condition:
+              StringEquals:
+                "s3:x-amz-acl": "bucket-owner-full-control"
+          - Sid: LogDeliveryPermissionCheck
+            Action: s3:GetBucketAcl
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Resource:
+              - !Sub "arn:aws:s3:::${S3EmrLocalAccessLogBucket}"
+
+  S3NfLocalAccessLogBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    DependsOn: S3LocalLoggingBucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: "AES256"
+      BucketName: !Sub elastic-aws-nf-local-logs-${AWS::AccountId}-${AWS::Region}
+      LifecycleConfiguration:
+        Rules:
+          - ExpirationInDays: 1
+            Id: Remove replicated logs after 1 day
+            NoncurrentVersionExpirationInDays: 1
+            Status: Enabled
+      LoggingConfiguration:
+        DestinationBucketName: !Ref S3LocalLoggingBucket
+        LogFilePrefix: !Sub "elastic-aws-nf-local-logs-${AWS::AccountId}-${AWS::Region}/"
+      ReplicationConfiguration:
+        Role: !Sub arn:aws:iam::${AWS::AccountId}:role/elastic-AWS-S3-Replication
+        Rules:
+          - Prefix: ""
+            Status: "Enabled"
+            Destination: 
+              AccessControlTranslation:
+                Owner: Destination
+              Bucket: !Sub arn:aws:s3:::elastic-central-nf-access-logs-${LoggingAccountId}-${LoggingRegion}
+              Account: !Ref LoggingAccountId
+      VersioningConfiguration:
+        Status: Enabled
+
+  S3NfAccessLogBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3NfLocalAccessLogBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: AWSBucketPermissionsCheck
+            Action: s3:PutObject
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Resource:
+              - !Sub "arn:aws:s3:::${S3NfLocalAccessLogBucket}/*"
+          - Sid: LogDelivery
+            Action: s3:PutObject
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Resource:
+              - !Sub "arn:aws:s3:::${S3NfLocalAccessLogBucket}/*"
+            Condition:
+              StringEquals:
+                "s3:x-amz-acl": "bucket-owner-full-control"
+          - Sid: LogDeliveryPermissionCheck
+            Action: s3:GetBucketAcl
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Resource:
+              - !Sub "arn:aws:s3:::${S3NfLocalAccessLogBucket}"
+
+  S3CloudfrontLocalAccessLogBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    DependsOn: S3LocalLoggingBucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: "AES256"
+      BucketName: !Sub elastic-aws-cloudfront-local-logs-${AWS::AccountId}-${AWS::Region}
+      LifecycleConfiguration:
+        Rules:
+          - ExpirationInDays: 1
+            Id: Remove replicated logs after 1 day
+            NoncurrentVersionExpirationInDays: 1
+            Status: Enabled
+      LoggingConfiguration:
+        DestinationBucketName: !Ref S3LocalLoggingBucket
+        LogFilePrefix: !Sub "elastic-aws-cloudfront-local-logs-${AWS::AccountId}-${AWS::Region}/"
+      ReplicationConfiguration:
+        Role: !Sub arn:aws:iam::${AWS::AccountId}:role/elastic-AWS-S3-Replication
+        Rules:
+          - Prefix: ""
+            Status: "Enabled"
+            Destination: 
+              AccessControlTranslation:
+                Owner: Destination
+              Bucket: !Sub arn:aws:s3:::elastic-central-cloudfront-access-logs-${LoggingAccountId}-${LoggingRegion}
+              Account: !Ref LoggingAccountId
+      VersioningConfiguration:
+        Status: Enabled
+
+  S3CloudfrontAccessLogBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3CloudfrontLocalAccessLogBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: AWSBucketPermissionsCheck
+            Action: s3:PutObject
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Resource:
+              - !Sub "arn:aws:s3:::${S3CloudfrontLocalAccessLogBucket}/*"
+          - Sid: LogDelivery
+            Action: s3:PutObject
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Resource:
+              - !Sub "arn:aws:s3:::${S3CloudfrontLocalAccessLogBucket}/*"
+            Condition:
+              StringEquals:
+                "s3:x-amz-acl": "bucket-owner-full-control"
+          - Sid: LogDeliveryPermissionCheck
+            Action: s3:GetBucketAcl
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Resource:
+              - !Sub "arn:aws:s3:::${S3CloudfrontLocalAccessLogBucket}"
+              
+  S3LocalLoggingBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: "AES256"
+      BucketName: !Sub elastic-aws-local-s3-access-logs-${AWS::AccountId}-${AWS::Region}
+      LifecycleConfiguration:
+        Rules:
+          - ExpirationInDays: 1
+            Id: Remove replicated logs after 1 day
+            NoncurrentVersionExpirationInDays: 1
+            Status: Enabled
+      ReplicationConfiguration:
+        Role: !Sub arn:aws:iam::${AWS::AccountId}:role/elastic-AWS-S3-Replication
+        Rules:
+          - Prefix: ""
+            Status: "Enabled"
+            Destination: 
+              AccessControlTranslation:
+                Owner: Destination
+              Bucket: !Sub arn:aws:s3:::elastic-central-s3-access-logs-${LoggingAccountId}-${LoggingRegion}
+              Account: !Ref LoggingAccountId
+      VersioningConfiguration:
+        Status: Enabled
+        
+  ElasticServerlessForwarderEventMacro:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location:
+        ApplicationId: arn:aws:serverlessrepo:eu-central-1:267093732750:applications/helper-macro-elastic-serverless-forwarder
+        SemanticVersion: 1.9.0
+    DependsOn:
+    - TriggersBootstrapLambda
+    Metadata:
+      SamResourceId: ElasticServerlessForwarderEventMacro
+
+  ElasticServerlessForwarderApplication:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location:
+        ApplicationId: arn:aws:serverlessrepo:eu-central-1:267093732750:applications/helper-application-elastic-serverless-forwarder
+        SemanticVersion: 1.9.0
+      Parameters:
+        ElasticServerlessForwarderS3ConfigFile: !Sub s3://${S3ConfigFileBucket}/config.yml
+        ElasticServerlessForwarderSSMSecrets: !Ref ElasticSecret
+        ElasticServerlessForwarderKMSKeys: !GetAtt ElasticSSMSecretEncryptionKey.Arn
+        ElasticServerlessForwarderSQSEvents: ""
+        ElasticServerlessForwarderS3SQSEvents: ""
+        ElasticServerlessForwarderKinesisEvents:
+          Fn::Join:
+          - ','
+          - Ref: KinesisDataStreamArn
+        ElasticServerlessForwarderCloudWatchLogsEvents:
+          Fn::Join:
+          - ','
+          - Ref: CloudWatchLogGroupArns
+        ElasticServerlessForwarderS3Buckets: ""
+        ElasticServerlessForwarderSecurityGroups: !If
+          - ShouldDeployElasticForwarderInVPC
+          - !GetAtt ElasticForwarderSecurityGroup.GroupId
+          - ""
+        ElasticServerlessForwarderSubnets: !If
+          - ShouldDeployElasticForwarderInVPC
+          - Fn::Join: [',', !Ref SubnetIds]
+          - ""
+    DependsOn: 
+    - ElasticServerlessForwarderEventMacro
+    Metadata:
+      SamResourceId: ElasticServerlessForwarderApplication
+      
+  S3ConfigFileBucket:       #Bucket to store the config.yaml file
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub aws-config-bucket-${AWS::AccountId}-${AWS::Region}      
+      VersioningConfiguration:
+        Status: Enabled
+
+  S3ConfigFileBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    DependsOn: S3ConfigFileBucket
+    Properties:
+      Bucket: !Ref S3ConfigFileBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: AWSBucketPermissions
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+              - s3:GetBucketAcl
+              - s3:ListBucket
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com 
+            Resource:
+              - Fn::Join:
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - Ref: 'S3ConfigFileBucket'
+                    - '/*'
+              - Fn::Join:
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - Ref: 'S3ConfigFileBucket'
+
+  ElasticBootstrapLambdaForConfigFile:
+    Type: 'AWS::Lambda::Function'
+    DependsOn:
+    - S3ConfigFileBucketPolicy
+    - ElasticSecret
+    Properties:
+      FunctionName: !Sub Elastic-BootStrap-Lambda-${AWS::AccountId}-${AWS::Region}
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt BootstrapLambdaExecutionRole.Arn
+      Runtime: python3.11
+      Timeout: 300
+      MemorySize: 128
+      Code:
+        S3Bucket: bootstrap-lambda-code
+        S3Key: MemberAccount-code/ElasticBootstrapLambdaMemberAccount.zip
+      Environment:
+        Variables:
+          ELASTIC_SECRET_ARN: !Ref ElasticSecret
+          S3_BUCKET_NAME: !Ref S3ConfigFileBucket
+          INGEST_CLOUDWATCH_LOGS: !Ref IngestCloudWatchLogs
+          CLOUDWATCH_LOG_GROUP_ARNS: !If
+            - ShouldIngestCloudWatchLogs
+            - Fn::Join: [',', !Ref CloudWatchLogGroupArns]
+            - ""  # Set to an empty string if ShouldIngestCloudWatchLogs is false  
+          INGEST_KINESIS_LOGS: !Ref IngestKinesisLogs
+          KINESIS_DATA_STREAM_ARNS: !If
+            - ShouldIngestKinesisDataStream
+            - Fn::Join: [',', !Ref KinesisDataStreamArn]
+            - ""  # Set to an empty string if ShouldIngestKinesisDataStream is false
+
+  BootstrapLambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Principal: 
+              Service: 
+              - "lambda.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Path: "/"
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+
+  RolePolicies: 
+    Type: 'AWS::IAM::Policy'
+    Properties: 
+      PolicyName: "ElasticBootstrapLambdaCustomPolicy"
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Action:
+            - "s3:PutObject"
+            - "s3:DeleteObject"
+            - "lambda:InvokeFunction"
+            - "cloudformation:SignalResource"
+            - "cloudformation:DescribeStackResources"
+            - "cloudformation:DescribeStackEvents"
+            Resource: "*" 
+      Roles: 
+        - Ref: "BootstrapLambdaExecutionRole"
+
+  TriggersBootstrapLambda:
+    Type: 'Custom::RunCode'
+    DependsOn: ElasticBootstrapLambdaForConfigFile
+    DeletionPolicy: Retain 
+    Properties:
+      ServiceToken: !GetAtt ElasticBootstrapLambdaForConfigFile.Arn
+      
+  ElasticForwarderSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: ShouldDeployElasticForwarderInVPC
+    Properties:
+      GroupDescription: Elastic SecurityGroup 
+      VpcId: !Ref VPCId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 9243
+          ToPort: 9243
+          CidrIp: 0.0.0.0/0
+      
+  ServerlessLambdaRolePolicies: 
+    Type: 'AWS::IAM::Policy'
+    Condition: ShouldDeployElasticForwarderInVPC
+    Properties: 
+      PolicyName: "ElasticBootstrapLambdaCustomPolicy"
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Action:
+            - "ec2:CreateSecurityGroup"
+            - "ec2:AuthorizeSecurityGroupIngress"
+            - "ec2:CreateVpcEndpoint"
+            - "ec2:DescribeVpcEndpoints"
+            - "route53:CreateHostedZone"
+            - "route53:ChangeResourceRecordSets"
+            - "route53:GetChange"
+            - "lambda:InvokeFunction"
+            - "ec2:DescribeVpcs"
+            - "cloudformation:SignalResource"
+            - "cloudformation:DescribeStackResources"
+            - "cloudformation:DescribeStackEvents"
+            - "s3:*"
+            Resource: "*" 
+      Roles: 
+        - Ref: "BootstrapLambdaExecutionRole"
+              
+  BootstrapLambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Condition: ShouldDeployElasticForwarderInVPC
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Principal: 
+              Service: 
+              - "lambda.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Path: "/"
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        
+  ElasticServerlessBootstrapFunction:
+    Type: AWS::Lambda::Function
+    Condition: ShouldDeployElasticForwarderInVPC
+    Properties:
+      Handler: index.lambda_handler
+      Role: !GetAtt BootstrapLambdaExecutionRole.Arn
+      Runtime: python3.8
+      Code:
+        ZipFile: |
+            import boto3
+            import os
+            import uuid
+            import random
+            import string
+            import cfnresponse
+
+            def create_security_group(vpc_id, group_description):
+                # Generate a random suffix for the group name
+                random_suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+                group_name = f'ElasticProxySecurityGroup_{random_suffix}'
+                
+                ec2 = boto3.resource('ec2')
+                security_group = ec2.create_security_group(
+                    VpcId=vpc_id,
+                    GroupName=group_name,
+                    Description=group_description
+                )
+                security_group.authorize_ingress(
+                    IpProtocol='tcp',
+                    FromPort=443,
+                    ToPort=443,
+                    CidrIp='0.0.0.0/0'
+                )
+                security_group.authorize_ingress(
+                    IpProtocol='tcp',
+                    FromPort=9243,
+                    ToPort=9243,
+                    CidrIp='0.0.0.0/0'
+                )
+                return security_group.id
+
+            def extract_dns_entries(response):
+                # Check if 'VpcEndpoint' key is present in the response
+                vpc_endpoint_info = response.get('VpcEndpoint', {})
+
+                # Extract DNS entries from 'DnsEntries' in 'VpcEndpoint' info
+                dns_entries = vpc_endpoint_info.get('DnsEntries', [])
+
+                if not dns_entries:
+                    raise ValueError("VpcEndpoint DNS entries not found in the response.")
+
+                # Use the first DNS entry for creating the CNAME record
+                dns_name = dns_entries[0].get('DnsName')
+
+                if dns_name is not None:
+                    print("VPC Endpoint DNS Entry:", dns_name)
+                else:
+                    raise ValueError("VpcEndpoint DNS entry is None.")
+
+                return dns_name
+
+            def create_vpc_endpoint(vpc_id, subnet_ids, security_group_id, region, service_name):
+                ec2 = boto3.client('ec2', region_name=region)
+                response = ec2.create_vpc_endpoint(
+                    VpcId=vpc_id,
+                    ServiceName=service_name,
+                    SubnetIds=subnet_ids,
+                    VpcEndpointType='Interface',
+                    SecurityGroupIds=[security_group_id]
+                )
+                
+                # Ensure 'VpcEndpointId' is present in the response
+                vpc_endpoint_id = response.get('VpcEndpoint', {}).get('VpcEndpointId')
+                if not vpc_endpoint_id:
+                    raise ValueError("VpcEndpointId not found in the response.")
+
+                # Extract DNS entries from the response
+                dns_name = extract_dns_entries(response)
+
+                print("Create VPC Endpoint Response:", response)
+                return vpc_endpoint_id, dns_name
+
+            def create_hosted_zone(vpc_id, region, private_hosted_zone):
+                route53 = boto3.client('route53')
+                caller_reference = str(uuid.uuid4())
+                response = route53.create_hosted_zone(
+                    Name=private_hosted_zone,
+                    VPC={
+                        'VPCId': vpc_id,
+                        'VPCRegion': region
+                    },
+                    CallerReference=caller_reference
+                )
+                # Extract Hosted Zone Id
+                hosted_zone_id = response['HostedZone']['Id']
+                return hosted_zone_id
+
+            def create_cname_record(hosted_zone_id, region, dns_name):
+                try:
+                    print("Debug - VPC Endpoint DNS Entry:", dns_name)
+
+                    if dns_name is not None and isinstance(dns_name, str):
+                        route53 = boto3.client('route53')
+                        response = route53.change_resource_record_sets(
+                            HostedZoneId=hosted_zone_id,
+                            ChangeBatch={
+                                'Changes': [
+                                    {
+                                        'Action': 'CREATE',
+                                        'ResourceRecordSet': {
+                                            'Name': f'*.vpce.{region}.aws.elastic-cloud.com',
+                                            'Type': 'CNAME',
+                                            'TTL': 60,
+                                            'ResourceRecords': [
+                                                {
+                                                    'Value': dns_name
+                                                }
+                                            ]
+                                        }
+                                    }
+                                ]
+                            }
+                        )
+                        # Print the response for debugging purposes
+                        print(response)
+                        print("Debug - CNAME Record created successfully.")
+                    else:
+                        print("Warning: VpcEndpoint DNS entry is None or not in the expected format.")
+                except Exception as e:
+                    print(f"Error creating CNAME record: {e}")
+                    raise
+
+            def lambda_handler(event, context):
+                vpc_id = os.environ.get('VPC_ID')
+                subnet_ids = os.environ.get('SUBNET_IDS').split(',')
+                region = os.environ.get('REGION')
+                service_name = os.environ.get('ServiceName')
+                private_hosted_zone = os.environ.get('Private_Hosted_Zone')
+                responseData = {}
+                
+                try:
+                    security_group_id = create_security_group(vpc_id, 'Elastic Proxy SecurityGroup')
+                    vpc_endpoint_id, dns_name = create_vpc_endpoint(vpc_id, subnet_ids, security_group_id, region, service_name)
+                    hosted_zone_id = create_hosted_zone(vpc_id, region, private_hosted_zone)
+
+                    # Use the DNS name obtained from create_vpc_endpoint function
+                    if dns_name is not None:
+                        create_cname_record(hosted_zone_id, region, dns_name)
+                    else:
+                        raise ValueError("VpcEndpoint DNS entry is None.")  
+                    
+                    cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+                except Exception as e:
+                    # Send a failure response with the error reason
+                    cfnresponse.send(event, context, cfnresponse.FAILED, responseData, reason=str(e))
+      Timeout: 300
+      Environment:
+        Variables:
+          VPC_ID: !Ref VPCId
+          SUBNET_IDS: !Join [',', !Ref SubnetIds]
+          ServiceName: 
+            !FindInMap 
+              - VPCServiceName
+              - !Ref 'AWS::Region'
+              - service
+          Private_Hosted_Zone:
+            !FindInMap 
+              - PrivateHostedZoneDNSName
+              - !Ref 'AWS::Region'
+              - HostedZone
+          REGION: !Sub ${AWS::Region}           
+    
+  TriggersBootstrapLambda:
+    Type: 'Custom::RunCode'
+    Condition: ShouldDeployElasticForwarderInVPC
+    DeletionPolicy: Retain
+    DependsOn: ElasticServerlessBootstrapFunction
+    Properties:
+      ServiceToken: !GetAtt ElasticServerlessBootstrapFunction.Arn
