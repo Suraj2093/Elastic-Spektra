@@ -59,7 +59,7 @@ Parameters:
     DeployInVPC:
       Type: String
       Description: >
-        'If you want to ingest either Kinesis data Streams or the CloudWatch logs to Elastic Cloud, an Elastic Serverless Forwarder will be deployed. Do you want to deploy this Elastic Serverless Forwarder in a VPC? (Enter "yes" or "no").
+        'If you want to ingest either Kinesis data Streams or the CloudWatch logs to Elastic Cloud, an Elastic Serverless Forwarder will be deployed. Do you want to deploy this Elastic Serverless Forwarder in a VPC? (Enter "Yes" or "No").
         Note: If yes, make sure a VPC is already been created in the region before deploying this CFT.' 
       Default: 'No'
       AllowedValues: ['Yes', 'No']

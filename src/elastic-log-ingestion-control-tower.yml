@@ -44,17 +44,19 @@ Parameters:
     DeployInVPC:
       Type: String
       Description: >
-        'Do you want to deploy the Elastic Serverless Forwarder in a VPC? (Enter "yes" or "no").
+        'Do you want to deploy the Elastic Serverless Forwarder in a VPC? (Enter "Yes" or "No").
         Note: If yes, make sure a VPC is already been created in the region before deploying this CFT.' 
       Default: 'No'
       AllowedValues: ['Yes', 'No']
 
     VPCId:
       Type: String
+      Default: ""
       Description: 'Enter the VPC ID in which you want to deploy the Elastic Serverless Forwarder. Provide the value only if you want to deploy the Elastic Serverless Forwarder in the VPC'
 
     SubnetIds:
       Type: CommaDelimitedList
+      Default: ""
       Description: 'Enter the Subnet IDs (comma-separated) for the Elastic Serverless Forwarder. Provide the value only if you want to deploy the Elastic Serverless Forwarder in the VPC'
       ConstraintDescription: 'Please enter a valid list of Subnet IDs.'
       
@@ -835,7 +837,7 @@ Resources:
         ApplicationId: arn:aws:serverlessrepo:eu-central-1:267093732750:applications/helper-macro-elastic-serverless-forwarder
         SemanticVersion: 1.9.0
     DependsOn:
-    - MyCustomResource
+    - TriggersElasticBootstrapLambdaFunction
     Metadata:
       SamResourceId: ElasticServerlessForwarderEventMacro
 
@@ -1068,16 +1070,11 @@ Resources:
           - Effect: "Allow"
             Action:
             - "s3:PutObject"
-            - "s3:DeleteObject"
-            - "lambda:InvokeFunction"
-            - "cloudformation:SignalResource"
-            - "cloudformation:DescribeStackResources"
-            - "cloudformation:DescribeStackEvents"
             Resource: "*" 
       Roles: 
         - Ref: "ElasticBootstrapLambdaExecutionRole"
 
-  MyCustomResource:
+  TriggersElasticBootstrapLambdaFunction:
     Type: 'Custom::RunCode'
     DependsOn: ElasticBootstrapLambdaForConfigFile
     DeletionPolicy: Retain  # Add this line to specify the deletion policy
