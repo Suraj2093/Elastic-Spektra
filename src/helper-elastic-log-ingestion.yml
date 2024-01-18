@@ -66,10 +66,12 @@ Parameters:
 
     VPCId:
       Type: String
+      Default: ""
       Description: 'Enter the VPC ID in which you want to deploy the Elastic Serverless Forwarder. Provide the value only if you want to deploy the Elastic Serverless Forwarder in the VPC'
 
     SubnetIds:
       Type: CommaDelimitedList
+      Default: ""
       Description: 'Enter the Subnet IDs (comma-separated) for the Elastic Serverless Forwarder. Provide the value only if you want to deploy the Elastic Serverless Forwarder in the VPC'
       ConstraintDescription: 'Please enter a valid list of Subnet IDs.'
     
@@ -323,8 +325,8 @@ Resources:
               - arn:aws:s3:::elastic-aws-emr-local-logs*
               - arn:aws:s3:::elastic-aws-elb-local-logs-*/*
               - arn:aws:s3:::elastic-aws-elb-local-logs-*
-              - arn:aws:s3:::aws-waf-logs-elastic-local-logs-*/*
-              - arn:aws:s3:::aws-waf-logs-elastic-local-logs-*
+              - arn:aws:s3:::elastic-aws-waf-local-logs-*/*
+              - arn:aws:s3:::elastic-aws-waf-local-logs-*
               - arn:aws:s3:::elastic-aws-nf-local-logs-*/*
               - arn:aws:s3:::elastic-aws-nf-local-logs-*
               - arn:aws:s3:::elastic-aws-cloudfront-local-logs-*/*
@@ -430,7 +432,7 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: "AES256"
-      BucketName: !Sub aws-waf-logs-elastic-local-logs-${AWS::AccountId}-${AWS::Region}
+      BucketName: !Sub elastic-aws-waf-local-logs-${AWS::AccountId}-${AWS::Region}
       LifecycleConfiguration:
         Rules:
           - ExpirationInDays: 1
@@ -439,7 +441,7 @@ Resources:
             Status: Enabled
       LoggingConfiguration:
         DestinationBucketName: !Ref S3LocalLoggingBucket
-        LogFilePrefix: !Sub "aws-waf-logs-elastic-local-logs-${AWS::AccountId}-${AWS::Region}/"
+        LogFilePrefix: !Sub "elastic-aws-waf-local-logs-${AWS::AccountId}-${AWS::Region}/"
       ReplicationConfiguration:
         Role: !Sub arn:aws:iam::${AWS::AccountId}:role/elastic-AWS-S3-Replication
         Rules:
@@ -801,7 +803,7 @@ Resources:
     Properties:
       FunctionName: !Sub Elastic-BootStrap-Lambda-${AWS::AccountId}-${AWS::Region}
       Handler: lambda_function.lambda_handler
-      Role: !GetAtt BootstrapLambdaExecutionRole.Arn
+      Role: !GetAtt ElasticBootstrapLambdaExecutionRole.Arn
       Runtime: python3.11
       Timeout: 300
       MemorySize: 128
@@ -823,7 +825,7 @@ Resources:
             - Fn::Join: [',', !Ref KinesisDataStreamArn]
             - ""  # Set to an empty string if ShouldIngestKinesisDataStream is false
 
-  BootstrapLambdaExecutionRole:
+  ElasticBootstrapLambdaExecutionRole:
     Type: 'AWS::IAM::Role'
     Properties:
       AssumeRolePolicyDocument: 
@@ -842,21 +844,16 @@ Resources:
   RolePolicies: 
     Type: 'AWS::IAM::Policy'
     Properties: 
-      PolicyName: "ElasticBootstrapLambdaCustomPolicy"
+      PolicyName: "ElasticBootstrapLambdaPolicy"
       PolicyDocument: 
         Version: "2012-10-17"
         Statement: 
           - Effect: "Allow"
             Action:
             - "s3:PutObject"
-            - "s3:DeleteObject"
-            - "lambda:InvokeFunction"
-            - "cloudformation:SignalResource"
-            - "cloudformation:DescribeStackResources"
-            - "cloudformation:DescribeStackEvents"
             Resource: "*" 
       Roles: 
-        - Ref: "BootstrapLambdaExecutionRole"
+        - Ref: "ElasticBootstrapLambdaExecutionRole"
 
   TriggersBootstrapLambda:
     Type: 'Custom::RunCode'
@@ -890,7 +887,7 @@ Resources:
     Type: 'AWS::IAM::Policy'
     Condition: ShouldDeployElasticForwarderInVPC
     Properties: 
-      PolicyName: "ElasticBootstrapLambdaCustomPolicy"
+      PolicyName: "ElasticServerlessLambdaPolicy"
       PolicyDocument: 
         Version: "2012-10-17"
         Statement: 
@@ -911,9 +908,9 @@ Resources:
             - "s3:*"
             Resource: "*" 
       Roles: 
-        - Ref: "BootstrapLambdaExecutionRole"
+        - Ref: "ServerlessLambdaExecutionRole"
               
-  BootstrapLambdaExecutionRole:
+  ServerlessLambdaExecutionRole:
     Type: 'AWS::IAM::Role'
     Condition: ShouldDeployElasticForwarderInVPC
     Properties:
@@ -935,7 +932,7 @@ Resources:
     Condition: ShouldDeployElasticForwarderInVPC
     Properties:
       Handler: index.lambda_handler
-      Role: !GetAtt BootstrapLambdaExecutionRole.Arn
+      Role: !GetAtt ServerlessLambdaExecutionRole.Arn
       Runtime: python3.8
       Code:
         ZipFile: |
@@ -1102,7 +1099,7 @@ Resources:
               - HostedZone
           REGION: !Sub ${AWS::Region}           
     
-  TriggersBootstrapLambda:
+  TriggersServerlessBootstrapLambdaFunction:
     Type: 'Custom::RunCode'
     Condition: ShouldDeployElasticForwarderInVPC
     DeletionPolicy: Retain
