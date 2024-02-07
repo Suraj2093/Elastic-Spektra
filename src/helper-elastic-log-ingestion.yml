@@ -60,7 +60,7 @@ Parameters:
       Type: String
       Description: >
         'If you want to ingest either Kinesis data Streams or the CloudWatch logs to Elastic Cloud, an Elastic Serverless Forwarder will be deployed. Do you want to deploy this Elastic Serverless Forwarder in a VPC? (Enter "Yes" or "No").
-        Note: If yes, make sure a VPC is already been created in the region before deploying this CFT.' 
+        Note: If Yes, make sure a VPC is already been created in the region before deploying this CFT.' 
       Default: 'No'
       AllowedValues: ['Yes', 'No']
 
@@ -75,11 +75,60 @@ Parameters:
       Description: 'Enter the Subnet IDs (comma-separated) for the Elastic Serverless Forwarder. Provide the value only if you want to deploy the Elastic Serverless Forwarder in the VPC'
       ConstraintDescription: 'Please enter a valid list of Subnet IDs.'
     
+    RouteTableIds:
+      Type: CommaDelimitedList
+      Default: ""
+      Description: 'Specify the IDs of the route tables to be updated for the S3 bucket Gateway VPC Endpoint. Provide values only if deploying the Elastic serverless forwarder in a VPC.'
+      ConstraintDescription: 'Please enter valid Route Table IDs.'
+      
+    IngestViaKinesisFirehose:
+      Type: String
+      Default: "No"
+      AllowedValues:
+        - "Yes"
+        - "No"
+      Description: "Specify whether you want to ingest logs to Elastic Cloud using Amazon Kinesis Firehose Delivery Stream. Choose 'Yes' to enable ingestion via Kinesis Firehose, or 'No' to ingest logs via a different method."
+    
+    ElasticEndpointURL:
+      Type: String
+      Default: ""
+      Description: "Specify the endpoint URL of your Elastic deployment. This is the URL where your Elastic services are hosted. Note: Ensure this value is entered accurately to enable proper integration with your Elastic deployment."
+
+    IngestEC2Logs:
+      Type: String
+      Default: "No"
+      AllowedValues:
+      - "Yes"
+      - "No"
+      Description: "Do you want to ingest EC2 logs to the Elastic Cloud? (Choose 'Yes' or 'No')."
+      
+    KibanaURL:
+      Type: String
+      Default: ''
+      Description: >-
+        If you want to ingest EC2 logs to Elastic Cloud, then provide the Kibana
+        URL in this section.
+      
+    EnrollmentToken:
+      Type: String
+      Default: ''
+      Description: >-
+        If you want to ingest EC2 logs to Elastic Cloud, then provide the
+        Enrollment Token in this section.
+    
 Conditions:
   ShouldIngestKinesisDataStream: !Equals [!Ref IngestKinesisLogs, "Yes"]
   ShouldIngestCloudWatchLogs: !Equals [!Ref IngestCloudWatchLogs, "Yes"]
   ShouldDeployElasticForwarderInVPC: !Equals [!Ref DeployInVPC, "Yes"]
-  
+  ShouldDeployElasticServerlessForwarder: !Or
+    - !Equals [!Ref IngestKinesisLogs, "Yes"]
+    - !Equals [!Ref IngestCloudWatchLogs, "Yes"]
+  ShouldDeployVPCResource: !And
+    - !Equals [!Ref DeployInVPC, "Yes"]
+    - Condition: ShouldDeployElasticServerlessForwarder
+  ShouldIngestLogsViaKinesisFireHose: !Equals [!Ref IngestViaKinesisFirehose, "Yes"]
+  ShouldIngestEC2InstanceLogs: !Equals [!Ref IngestEC2Logs, "Yes"]
+    
 Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
@@ -98,12 +147,6 @@ Metadata:
       - ElasticCloudID
       - ElasticAPIKey
     - Label:
-        default: Ingest EC2 Instance Logs
-      Parameters:
-      - IngestEC2Logs
-      - KibanaURL
-      - EnrollmentToken
-    - Label:
         default: Ingest kinesis data stream (Optional)
       Parameters:
       - IngestKinesisLogs
@@ -119,6 +162,18 @@ Metadata:
       - DeployInVPC
       - VPCId
       - SubnetIds
+      - RouteTableIds
+    - Label:
+        default: Ingest EC2 Instance Logs (Optional)
+      Parameters:
+      - IngestEC2Logs
+      - KibanaURL
+      - EnrollmentToken
+    - Label:
+        default: Ingest Logs Via AWS KinesisFireHose delivery stream (Optional)
+      Parameters:
+      - IngestViaKinesisFirehose
+      - ElasticEndpointURL
     ParameterLabels:
       ElasticCloudID:
         default: Elastic Cloud ID
@@ -130,26 +185,32 @@ Metadata:
         default: Logging Region
       AWSOrganizationID:
         default: Organization ID
-      IngestEC2Logs:
-        default: Ingest EC2 Logs
-      KibanaURL:
-        default: Kibana URL
-      EnrollmentToken:
-        default: Enrollment Token
       IngestKinesisLogs:
         default: Ingest Kinesis Logs
       KinesisDataStreamArn:
-        default: Kinesis Data Stream ARNs
+        default: Kinesis Data Stream ARN
       IngestCloudWatchLogs:
         default: Ingest CloudWatch Logs
       CloudWatchLogGroupArns:
         default: CloudWatch LogGroup ARNs
       DeployInVPC:
-        default: Deploy Serverless Forwarder In VPC
+        default: Deploy Elastic Serverless Forwarder in a VPC
       VPCId:
         default: VPC ID
       SubnetIds:
         default: Subnet IDs
+      RouteTableIds:
+        Default: Route Table IDs
+      ElasticEndpointURL:
+        Default: Elasticsearch Endpoint URL
+      IngestEC2Logs:
+        default: Ingest EC2 Logs
+      KibanaURL:
+        Default: Kibana URL
+      EnrollmentToken:
+        Default: Enrollment Token
+      IngestViaKinesisFirehose:
+        default: Ingest Via Kinesis Firehose Delivery stream
 
 Mappings:
   VPCServiceName:
@@ -193,52 +254,96 @@ Mappings:
       service: com.amazonaws.vpce.us-west-1.vpce-svc-00def4a16a26cb1b4
     us-west-2:
       service: com.amazonaws.vpce.us-west-2.vpce-svc-0e69febae1fb91870
+      
   PrivateHostedZoneDNSName:
     af-south-1:
-      HostedZone: vpce.af-south-1.aws.elastic-cloud.com
+      HostedZone: af-south-1.aws.found.io
     ap-east-1:
-      HostedZone: vpce.ap-east-1.aws.elastic-cloud.com
+      HostedZone: ap-east-1.aws.found.io
     ap-northeast-1:
-      HostedZone: vpce.ap-northeast-1.aws.elastic-cloud.com
+      HostedZone: ap-northeast-1.aws.found.io
     ap-northeast-2:
-      HostedZone: vpce.ap-northeast-2.aws.elastic-cloud.com
+      HostedZone: ap-northeast-2.aws.found.io
     ap-south-1:
-      HostedZone: vpce.ap-south-1.aws.elastic-cloud.com
+      HostedZone: ap-south-1.aws.found.io
     ap-southeast-1:
-      HostedZone: vpce.ap-southeast-1.aws.elastic-cloud.com
+      HostedZone: ap-southeast-1.aws.found.io
     ap-southeast-2:
-      HostedZone: vpce.ap-southeast-2.aws.elastic-cloud.com
+      HostedZone: ap-southeast-2.aws.found.io
     ca-central-1:
-      HostedZone: vpce.ca-central-1.aws.elastic-cloud.com
+      HostedZone: ca-central-1.aws.found.io
     eu-central-1:
-      HostedZone: vpce.eu-central-1.aws.elastic-cloud.com
+      HostedZone: eu-central-1.aws.found.io
     eu-south-1:
-      HostedZone: vpce.eu-south-1.aws.elastic-cloud.com
+      HostedZone: eu-south-1.aws.found.io
     eu-north-1:
-      HostedZone: vpce.eu-north-1.aws.elastic-cloud.com
+      HostedZone: eu-north-1.aws.found.io
     eu-west-1:
-      HostedZone: vpce.eu-west-1.aws.elastic-cloud.com
+      HostedZone: eu-west-1.aws.found.io
     eu-west-2:
-      HostedZone: vpce.eu-west-2.aws.elastic-cloud.com
+      HostedZone: eu-west-2.aws.found.io
     eu-west-3:
-      HostedZone: vpce.eu-west-3.aws.elastic-cloud.com
+      HostedZone: eu-west-3.aws.found.io
     me-south-1:
-      HostedZone: vpce.me-south-1.aws.elastic-cloud.com
+      HostedZone: me-south-1.aws.found.io
     sa-east-1:
-      HostedZone: vpce.sa-east-1.aws.elastic-cloud.com
+      HostedZone: sa-east-1.aws.found.io
     us-east-1: 
-      HostedZone: vpce.us-east-1.aws.elastic-cloud.com
+      HostedZone: us-east-1.aws.found.io
     us-east-2:
-      HostedZone: vpce.us-east-2.aws.elastic-cloud.com
+      HostedZone: us-east-2.aws.found.io
     us-west-1:
-      HostedZone: vpce.us-west-1.aws.elastic-cloud.com
+      HostedZone: us-west-1.aws.found.io
     us-west-2:
-      HostedZone: vpce.us-west-2.aws.elastic-cloud.com        
+      HostedZone: us-west-2.aws.found.io   
+
+  AMIID:
+    af-south-1: 
+      ami: ami-05759acc7d8973892
+    ap-east-1:
+      ami: ami-03490b1b7425e5fe3
+    ap-northeast-1:
+      ami: ami-09a81b370b76de6a2
+    ap-northeast-2:
+      ami: ami-086cae3329a3f7d75
+    ap-south-1:
+      ami: ami-0287a05f0ef0e9d9a
+    ap-southeast-1:
+      ami: ami-078c1149d8ad719a7
+    ap-southeast-2:
+      ami: ami-0df4b2961410d4cff
+    ca-central-1:
+      ami: ami-06873c81b882339ac
+    eu-central-1:
+      ami: ami-06dd92ecc74fdfb36
+    eu-south-1:
+      ami: ami-0b03947fd0ce0eed2
+    eu-north-1:
+      ami: ami-0fe8bec493a81c7da
+    eu-west-1:
+      ami: ami-0694d931cee176e7d
+    eu-west-2:
+      ami: ami-0505148b3591e4c07
+    eu-west-3:
+      ami: ami-00983e8a26e4c9bd9
+    me-south-1: 
+      ami: ami-0f8d2a6080634ee69
+    sa-east-1: 
+      ami: ami-0b6c2d49148000cd5
+    us-east-1: 
+      ami: ami-0fc5d935ebf8bc3bc
+    us-east-2:
+      ami: ami-0e83be366243f524a
+    us-west-1: 
+      ami: ami-0cbd40f694b804622
+    us-west-2:
+      ami: ami-0efcece6bed30fd98 
 
 Resources:
   ElasticSecret:
     Type: AWS::SecretsManager::Secret
     DependsOn: ElasticSSMSecretEncryptionKey
+    Condition: ShouldDeployElasticServerlessForwarder
     Properties:
       Name: !Sub "ElasticCloudSecret-${AWS::StackName}"
       KmsKeyId: !Ref ElasticSSMSecretEncryptionKey
@@ -250,6 +355,7 @@ Resources:
         
   ElasticSSMSecretEncryptionKey:     # Create a KMS Key to encrypt the secrets in AWS SSM store
     Type: AWS::KMS::Key
+    Condition: ShouldDeployElasticServerlessForwarder
     Properties:
       Description: Encrypt the secrets stored in the SSM Store.
       Enabled: true
@@ -278,6 +384,7 @@ Resources:
 
   ElasticSSMSecretKMSKeyAlias:
     Type: AWS::KMS::Alias
+    Condition: ShouldDeployElasticServerlessForwarder
     Properties:
       AliasName: alias/ElasticSSMSecretEncryptionKey
       TargetKeyId: !Ref ElasticSSMSecretEncryptionKey
@@ -360,8 +467,8 @@ Resources:
 
   S3ElbLocalAccessLogBucket:
     Type: AWS::S3::Bucket
-    DeletionPolicy: Retain
     DependsOn: S3LocalLoggingBucket
+    DeletionPolicy: Retain
     Properties:
       BucketEncryption:
         ServerSideEncryptionConfiguration:
@@ -403,13 +510,14 @@ Resources:
             Principal:
               AWS:
                 - !Sub "arn:aws:iam::${AWS::AccountId}:root"
+                - "arn:aws:iam::127311923021:root"
             Resource:
               - !Sub "arn:aws:s3:::${S3ElbLocalAccessLogBucket}/*"
           - Sid: LogDelivery
             Action: s3:PutObject
             Effect: Allow
             Principal:
-              Service: delivery.logs.amazonaws.com
+              Service: logdelivery.elasticloadbalancing.amazonaws.com
             Resource:
               - !Sub "arn:aws:s3:::${S3ElbLocalAccessLogBucket}/*"
             Condition:
@@ -425,8 +533,8 @@ Resources:
               
   S3WafLocalAccessLogBucket:
     Type: AWS::S3::Bucket
-    DeletionPolicy: Retain
     DependsOn: S3LocalLoggingBucket
+    DeletionPolicy: Retain
     Properties:
       BucketEncryption:
         ServerSideEncryptionConfiguration:
@@ -490,8 +598,8 @@ Resources:
 
   S3EmrLocalAccessLogBucket:
     Type: AWS::S3::Bucket
-    DeletionPolicy: Retain
     DependsOn: S3LocalLoggingBucket
+    DeletionPolicy: Retain
     Properties:
       BucketEncryption:
         ServerSideEncryptionConfiguration:
@@ -555,8 +663,8 @@ Resources:
 
   S3NfLocalAccessLogBucket:
     Type: AWS::S3::Bucket
-    DeletionPolicy: Retain
     DependsOn: S3LocalLoggingBucket
+    DeletionPolicy: Retain
     Properties:
       BucketEncryption:
         ServerSideEncryptionConfiguration:
@@ -620,8 +728,8 @@ Resources:
 
   S3CloudfrontLocalAccessLogBucket:
     Type: AWS::S3::Bucket
-    DeletionPolicy: Retain
     DependsOn: S3LocalLoggingBucket
+    DeletionPolicy: Retain
     Properties:
       BucketEncryption:
         ServerSideEncryptionConfiguration:
@@ -713,6 +821,7 @@ Resources:
         
   ElasticServerlessForwarderEventMacro:
     Type: AWS::Serverless::Application
+    Condition: ShouldDeployElasticServerlessForwarder
     Properties:
       Location:
         ApplicationId: arn:aws:serverlessrepo:eu-central-1:267093732750:applications/helper-macro-elastic-serverless-forwarder
@@ -724,6 +833,7 @@ Resources:
 
   ElasticServerlessForwarderApplication:
     Type: AWS::Serverless::Application
+    Condition: ShouldDeployElasticServerlessForwarder
     Properties:
       Location:
         ApplicationId: arn:aws:serverlessrepo:eu-central-1:267093732750:applications/helper-application-elastic-serverless-forwarder
@@ -758,6 +868,7 @@ Resources:
       
   S3ConfigFileBucket:       #Bucket to store the config.yaml file
     Type: AWS::S3::Bucket
+    Condition: ShouldDeployElasticServerlessForwarder
     DeletionPolicy: Retain
     Properties:
       BucketName: !Sub aws-config-bucket-${AWS::AccountId}-${AWS::Region}      
@@ -766,6 +877,7 @@ Resources:
 
   S3ConfigFileBucketPolicy:
     Type: AWS::S3::BucketPolicy
+    Condition: ShouldDeployElasticServerlessForwarder
     DependsOn: S3ConfigFileBucket
     Properties:
       Bucket: !Ref S3ConfigFileBucket
@@ -796,7 +908,8 @@ Resources:
                     - Ref: 'S3ConfigFileBucket'
 
   ElasticBootstrapLambdaForConfigFile:
-    Type: 'AWS::Lambda::Function'
+    Type: 'AWS::Serverless::Function'
+    Condition: ShouldDeployElasticServerlessForwarder
     DependsOn:
     - S3ConfigFileBucketPolicy
     - ElasticSecret
@@ -807,9 +920,9 @@ Resources:
       Runtime: python3.11
       Timeout: 300
       MemorySize: 128
-      Code:
-        S3Bucket: bootstrap-lambda-code
-        S3Key: MemberAccount-code/ElasticBootstrapLambdaMemberAccount.zip
+      CodeUri:
+        Bucket: bootstrap-lambda-code
+        Key: MemberAccount-code/ElasticBootstrapLambdaMemberAccount.zip
       Environment:
         Variables:
           ELASTIC_SECRET_ARN: !Ref ElasticSecret
@@ -827,6 +940,7 @@ Resources:
 
   ElasticBootstrapLambdaExecutionRole:
     Type: 'AWS::IAM::Role'
+    Condition: ShouldDeployElasticServerlessForwarder
     Properties:
       AssumeRolePolicyDocument: 
         Version: "2012-10-17"
@@ -843,6 +957,7 @@ Resources:
 
   RolePolicies: 
     Type: 'AWS::IAM::Policy'
+    Condition: ShouldDeployElasticServerlessForwarder
     Properties: 
       PolicyName: "ElasticBootstrapLambdaPolicy"
       PolicyDocument: 
@@ -857,6 +972,7 @@ Resources:
 
   TriggersBootstrapLambda:
     Type: 'Custom::RunCode'
+    Condition: ShouldDeployElasticServerlessForwarder
     DependsOn: ElasticBootstrapLambdaForConfigFile
     DeletionPolicy: Retain 
     Properties:
@@ -864,7 +980,7 @@ Resources:
       
   ElasticForwarderSecurityGroup:
     Type: AWS::EC2::SecurityGroup
-    Condition: ShouldDeployElasticForwarderInVPC
+    Condition: ShouldDeployVPCResource
     Properties:
       GroupDescription: Elastic SecurityGroup 
       VpcId: !Ref VPCId
@@ -885,7 +1001,7 @@ Resources:
       
   ServerlessLambdaRolePolicies: 
     Type: 'AWS::IAM::Policy'
-    Condition: ShouldDeployElasticForwarderInVPC
+    Condition: ShouldDeployVPCResource
     Properties: 
       PolicyName: "ElasticServerlessLambdaPolicy"
       PolicyDocument: 
@@ -912,7 +1028,7 @@ Resources:
               
   ServerlessLambdaExecutionRole:
     Type: 'AWS::IAM::Role'
-    Condition: ShouldDeployElasticForwarderInVPC
+    Condition: ShouldDeployVPCResource
     Properties:
       AssumeRolePolicyDocument: 
         Version: "2012-10-17"
@@ -928,14 +1044,13 @@ Resources:
         - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
         
   ElasticServerlessBootstrapFunction:
-    Type: AWS::Lambda::Function
-    Condition: ShouldDeployElasticForwarderInVPC
+    Type: AWS::Serverless::Function
+    Condition: ShouldDeployVPCResource
     Properties:
       Handler: index.lambda_handler
       Role: !GetAtt ServerlessLambdaExecutionRole.Arn
       Runtime: python3.8
-      Code:
-        ZipFile: |
+      InlineCode: |
             import boto3
             import os
             import uuid
@@ -1037,7 +1152,7 @@ Resources:
                                     {
                                         'Action': 'CREATE',
                                         'ResourceRecordSet': {
-                                            'Name': f'*.vpce.{region}.aws.elastic-cloud.com',
+                                            'Name': f'*.{region}.aws.found.io',
                                             'Type': 'CNAME',
                                             'TTL': 60,
                                             'ResourceRecords': [
@@ -1058,14 +1173,93 @@ Resources:
                 except Exception as e:
                     print(f"Error creating CNAME record: {e}")
                     raise
+                    
+            def create_s3_gateway_endpoint(vpc_id, route_table_id, region):
+                ec2_client = boto3.client('ec2', region_name=region)
+
+                response = ec2_client.create_vpc_endpoint(
+                    VpcId=vpc_id,
+                    ServiceName=f'com.amazonaws.{region}.s3',
+                    VpcEndpointType='Gateway',
+                    RouteTableIds=route_table_id
+                )
+
+                return response
+
+            def create_kinesis_data_stream_interface_endpoint(vpc_id, subnet_ids, security_group_id, region):
+                client = boto3.client('ec2', region_name=region)
+
+                response = client.create_vpc_endpoint(
+                    VpcId=vpc_id,
+                    ServiceName=f'com.amazonaws.{region}.kinesis-streams',
+                    VpcEndpointType='Interface',
+                    SubnetIds=subnet_ids,
+                    SecurityGroupIds=[security_group_id]
+                )
+
+                return response
+
+            def create_secretmanager_interface_endpoint(vpc_id, subnet_ids, security_group_id, region):
+                client = boto3.client('ec2', region_name=region)
+
+                response = client.create_vpc_endpoint(
+                    VpcId=vpc_id,
+                    ServiceName=f'com.amazonaws.{region}.secretsmanager',
+                    VpcEndpointType='Interface',
+                    SubnetIds=subnet_ids,
+                    SecurityGroupIds=[security_group_id]
+                )
+
+                return response
+
+            def create_kms_interface_endpoint(vpc_id, subnet_ids, security_group_id, region):
+                client = boto3.client('ec2', region_name=region)
+
+                response = client.create_vpc_endpoint(
+                    VpcId=vpc_id,
+                    ServiceName=f'com.amazonaws.{region}.kms',
+                    VpcEndpointType='Interface',
+                    SubnetIds=subnet_ids,
+                    SecurityGroupIds=[security_group_id]
+                )
+
+                return response
+
+            def create_cw_logs_interface_endpoint(vpc_id, subnet_ids, security_group_id, region):
+                client = boto3.client('ec2', region_name=region)
+
+                response = client.create_vpc_endpoint(
+                    VpcId=vpc_id,
+                    ServiceName=f'com.amazonaws.{region}.logs',
+                    VpcEndpointType='Interface',
+                    SubnetIds=subnet_ids,
+                    SecurityGroupIds=[security_group_id]
+                )
+
+                return response
+                    
+            def create_sqs_interface_endpoint(vpc_id, subnet_ids, security_group_id, region):
+                client = boto3.client('ec2', region_name=region)
+
+                response = client.create_vpc_endpoint(
+                    VpcId=vpc_id,
+                    ServiceName=f'com.amazonaws.{region}.sqs',
+                    VpcEndpointType='Interface',
+                    SubnetIds=subnet_ids,
+                    SecurityGroupIds=[security_group_id]
+                )
+
+                return response
 
             def lambda_handler(event, context):
-                vpc_id = os.environ.get('VPC_ID')
-                subnet_ids = os.environ.get('SUBNET_IDS').split(',')
-                region = os.environ.get('REGION')
-                service_name = os.environ.get('ServiceName')
-                private_hosted_zone = os.environ.get('Private_Hosted_Zone')
+                vpc_id = os.getenv('VPC_ID')
+                subnet_ids = os.getenv('SUBNET_IDS').split(',')
+                route_table_id = os.getenv('ROUTE_TABLE_ID').split(',')
+                region = os.getenv('REGION')
+                service_name = os.getenv('ServiceName')
+                private_hosted_zone = os.getenv('Private_Hosted_Zone')
                 responseData = {}
+           
                 
                 try:
                     security_group_id = create_security_group(vpc_id, 'Elastic Proxy SecurityGroup')
@@ -1076,13 +1270,59 @@ Resources:
                     if dns_name is not None:
                         create_cname_record(hosted_zone_id, region, dns_name)
                     else:
-                        raise ValueError("VpcEndpoint DNS entry is None.")  
+                        raise ValueError("VpcEndpoint DNS entry is None.")
+                        
+                    # Create S3 Gateway VPC endpoint
+                    s3_response = create_s3_gateway_endpoint(vpc_id, route_table_id, region)
+                    print("S3 Gateway VPC Endpoint created successfully:")
+                    print(s3_response)
+                    
+                    # Create SQS Interface VPC endpoint
+                    sqs_response = create_sqs_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
+                    print("SQS Interface VPC Endpoint created successfully:")
+                    print(sqs_response)
+
+                    # Check if user wants to ingest Kinesis logs based on a parameter
+                    ingest_kinesis_logs = os.getenv('INGEST_KINESIS_LOGS', 'No').strip().lower()
+
+                    if ingest_kinesis_logs == 'yes':
+
+                        # Create Kinesis datastream Interface VPC endpoint
+                        kinesis_response = create_kinesis_data_stream_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
+                        print("Kinesis Data Stream VPC Endpoint created successfully:")
+                        print(kinesis_response)
+
+                    else:
+                        print("Not creating Kinesis Data Stream endpoint.")
+
+                    # Create Secret Manager Interface VPC endpoint
+                    ssm_response = create_secretmanager_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
+                    print("Secret Manager Interface VPC Endpoint created successfully:")
+                    print(ssm_response)
+
+                    # Create Key Management service Interface VPC endpoint
+                    kms_response = create_kms_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
+                    print("Key Management Service Interface VPC Endpoint created successfully:")
+                    print(kms_response)
+
+                    # Check if user wants to ingest Cloudwatch logs based on a parameter
+                    ingest_cloudwatch_logs = os.getenv('INGEST_CLOUDWATCH_LOGS', 'No').strip().lower()
+
+                    if ingest_cloudwatch_logs == 'yes':
+
+                        # Create Cloudwatch Log Interface VPC endpoint
+                        logs_response = create_cw_logs_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
+                        print("CloudWatch Logs Interface VPC Endpoint created successfully:")
+                        print(logs_response)
+
+                    else:
+                        print("Not creating Kinesis Data Stream endpoint.")
                     
                     cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
                 except Exception as e:
                     # Send a failure response with the error reason
                     cfnresponse.send(event, context, cfnresponse.FAILED, responseData, reason=str(e))
-      Timeout: 300
+      Timeout: 900
       Environment:
         Variables:
           VPC_ID: !Ref VPCId
@@ -1097,12 +1337,260 @@ Resources:
               - PrivateHostedZoneDNSName
               - !Ref 'AWS::Region'
               - HostedZone
-          REGION: !Sub ${AWS::Region}           
+          REGION: !Sub ${AWS::Region}
+          ROUTE_TABLE_ID: !Join [',', !Ref RouteTableIds]
+          INGEST_KINESIS_LOGS: !Ref IngestKinesisLogs
+          INGEST_CLOUDWATCH_LOGS: !Ref IngestCloudWatchLogs
     
   TriggersServerlessBootstrapLambdaFunction:
     Type: 'Custom::RunCode'
-    Condition: ShouldDeployElasticForwarderInVPC
+    Condition: ShouldDeployVPCResource
     DeletionPolicy: Retain
     DependsOn: ElasticServerlessBootstrapFunction
     Properties:
       ServiceToken: !GetAtt ElasticServerlessBootstrapFunction.Arn
+      
+  KinesisFireHose:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    Condition: ShouldIngestLogsViaKinesisFireHose
+    DependsOn: KinesisFireHoseBackupBucket
+    Properties:
+      DeliveryStreamType: DirectPut   
+      HttpEndpointDestinationConfiguration:
+        EndpointConfiguration:
+          AccessKey: !Ref ElasticAPIKey
+          Name: "Elastic"
+          Url: !Ref ElasticEndpointURL
+        RequestConfiguration:
+          ContentEncoding: GZIP
+        BufferingHints:
+          IntervalInSeconds: 60
+          SizeInMBs: 1
+        RoleARN: !GetAtt KinesisFireHoseRole.Arn
+        RetryOptions:
+          DurationInSeconds: 300
+        CloudWatchLoggingOptions:
+            Enabled: true
+            LogGroupName: !Ref FireHoseLogGroup
+            LogStreamName: !Ref DestinationErrorLogStream
+        S3BackupMode: FailedDataOnly
+        S3Configuration:
+          BucketARN: !Sub "arn:aws:s3:::${KinesisFireHoseBackupBucket}"
+          CompressionFormat: UNCOMPRESSED
+          RoleARN: !GetAtt KinesisFireHoseRole.Arn
+          
+  KinesisFireHoseRole:
+    Type: 'AWS::IAM::Role'
+    Condition: ShouldIngestLogsViaKinesisFireHose
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Principal: 
+              Service: 
+              - "firehose.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Path: "/"
+
+  KinesisFireHoseRolePolicies: 
+    Type: 'AWS::IAM::Policy'
+    Condition: ShouldIngestLogsViaKinesisFireHose
+    Properties:
+      PolicyName: KinesisFireHoseAccessS3
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Action:
+            - "s3:AbortMultipartUpload"
+            - "s3:GetBucketLocation"
+            - "s3:GetObject"
+            - "s3:ListBucket"
+            - "s3:ListBucketMultipartUploads"
+            - "s3:PutObject"
+            Resource:
+            - !Sub "arn:aws:s3:::${KinesisFireHoseBackupBucket}/*"
+            - !Sub "arn:aws:s3:::${KinesisFireHoseBackupBucket}"
+      Roles: 
+        - Ref: "KinesisFireHoseRole"
+        
+  FireHoseLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Condition: ShouldIngestLogsViaKinesisFireHose
+    Properties:
+      RetentionInDays: 1
+
+  DestinationErrorLogStream:
+    Type: "AWS::Logs::LogStream"
+    Condition: ShouldIngestLogsViaKinesisFireHose
+    Properties:
+      LogGroupName: !Ref FireHoseLogGroup
+      LogStreamName: "DestinationDelivery"
+      
+  KinesisFireHoseBackupBucket:       #Bucket to store the failed data from Kinesis Firehose
+    Type: AWS::S3::Bucket
+    Condition: ShouldIngestLogsViaKinesisFireHose
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub elastic-kinesisfirehose-backup-${AWS::AccountId}-${AWS::Region}     
+      VersioningConfiguration:
+        Status: Enabled
+
+  KinesisFireHoseBackupBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    DependsOn: KinesisFireHoseBackupBucket
+    Condition: ShouldIngestLogsViaKinesisFireHose
+    Properties:
+      Bucket: !Ref KinesisFireHoseBackupBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: KinesisFireHoseBackupBucketPermissions
+            Action:
+              - s3:PutObject
+              - s3:GetBucketAcl
+              - s3:ListBucket
+            Effect: Allow
+            Principal:
+              Service:
+                - firehose.amazonaws.com 
+            Resource:
+              - Fn::Join:
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - Ref: 'KinesisFireHoseBackupBucket'
+                    - '/*'
+              - Fn::Join:
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - Ref: 'KinesisFireHoseBackupBucket'
+                    
+  ElasticAgentLambdaRolePolicy: 
+    Type: 'AWS::IAM::Policy'
+    Condition: ShouldIngestEC2InstanceLogs
+    Properties: 
+      PolicyName: "ElasticAgentLambdaRolePolicy"
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Action:
+            - "cloudformation:CreateStack"
+            - "ec2:*"
+            - "ssm:PutParameter"
+            - "s3:GetObject"
+            - "s3:PutObject"
+            Resource: "*" 
+      Roles: 
+        - Ref: "ElasticAgentLambdaExecutionRole"
+              
+  ElasticAgentLambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Condition: ShouldIngestEC2InstanceLogs
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Principal: 
+              Service: 
+              - "lambda.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Path: "/"
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        
+  ElasticAgentLambdaFunction:
+    Type: AWS::Serverless::Function
+    Condition: ShouldIngestEC2InstanceLogs
+    Properties:
+      Handler: index.lambda_handler
+      Role: !GetAtt ElasticAgentLambdaExecutionRole.Arn
+      Runtime: python3.9
+      InlineCode: |
+            import boto3
+            import os
+            import botocore
+            import json
+            import uuid
+            import random
+            import string
+            import cfnresponse
+
+            def lambda_handler(event, context):
+                
+                responseData = {}                
+                # Generate a random suffix adhering to the CloudFormation stack name pattern
+                random_suffix = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
+
+                # Combine the suffix with a prefix adhering to the pattern (e.g., "Elastic-Agent-")
+                stack_name = 'Elastic-Agent-' + random_suffix
+                
+                # Replace these values with your own
+                s3_bucket = 'elastic-proxy'
+                path = 'elastic-ec2-log-ingestion.json'
+                stack_name = stack_name
+
+                # Extract parameters from the Lambda input
+                kibana_url = os.getenv('KibanaURL')
+                enrollment_token = os.getenv('EnrollmentToken')
+                region = os.getenv('REGION')
+                ami_id = os.getenv('AMIID')
+
+                # Set up Boto3 clients
+                s3_client = boto3.client('s3', region_name=region)
+                cloudformation_client = boto3.client('cloudformation', region_name=region)
+                
+                # Fetch the CloudFormation Template from S3
+                try:
+                    response = s3_client.get_object(Bucket=s3_bucket, Key=path)
+                    template_body = response['Body'].read().decode('utf-8')
+                except botocore.exceptions.ClientError as e:
+                    print(f"Error fetching template from S3: {e}")
+                    return {
+                        'statusCode': 500,
+                        'body': json.dumps('Error fetching template from S3')
+                    }
+                
+                # Deploy the CloudFormation Template
+                try:
+                    response = cloudformation_client.create_stack(
+                        StackName=stack_name,
+                        TemplateBody=template_body,
+                        Parameters=[
+                            {'ParameterKey': 'KibanaURL', 'ParameterValue': kibana_url},
+                            {'ParameterKey': 'EnrollmentToken', 'ParameterValue': enrollment_token},
+                            {'ParameterKey': 'AMIID', 'ParameterValue': ami_id}
+                        ],
+                        Capabilities=['CAPABILITY_NAMED_IAM']  # Add capabilities if needed
+                    )
+                    print(f"Stack {stack_name} creation initiated. Stack ID: {response['StackId']}")
+                except botocore.exceptions.ClientError as e:
+                    print(f"Error deploying CloudFormation Template: {e}")
+                    # Send a failure response with the error reason
+                    cfnresponse.send(event, context, cfnresponse.FAILED, responseData, reason=str(e))
+    
+                print("CloudFormation Template deployed successfully.")
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)        
+      Timeout: 900
+      Environment:
+        Variables:
+          AMIID: 
+            !FindInMap 
+              - AMIID
+              - !Ref 'AWS::Region'
+              - ami
+          REGION: !Sub ${AWS::Region}
+          KibanaURL: !Ref KibanaURL
+          EnrollmentToken: !Ref EnrollmentToken
+          
+  TriggersElasticAgentLambdaFunction:
+    Type: 'Custom::RunCode'
+    Condition: ShouldIngestEC2InstanceLogs
+    DeletionPolicy: Retain
+    DependsOn: ElasticAgentLambdaFunction
+    Properties:
+      ServiceToken: !GetAtt ElasticAgentLambdaFunction.Arn
