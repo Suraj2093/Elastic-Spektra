@@ -792,6 +792,7 @@ Resources:
     DeletionPolicy: Retain
     DependsOn: 
       - ElasticCloudfrontSQSPolicy
+      - S3AccessLoggingBucket
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub elastic-central-cloudfront-access-logs-${AWS::AccountId}-${AWS::Region}
@@ -1363,6 +1364,17 @@ Resources:
                     raise ValueError("VpcEndpoint DNS entry is None.")
 
                 return dns_name
+                
+            def check_vpc_endpoint_exists(vpc_id, service_name):
+                ec2 = boto3.client('ec2')
+                response = ec2.describe_vpc_endpoints(
+                    Filters=[
+                        {'Name': 'vpc-id', 'Values': [vpc_id]},
+                        {'Name': 'service-name', 'Values': [service_name]}
+                    ]
+                )
+                endpoints = response.get('VpcEndpoints', [])
+                return bool(endpoints)
 
             def create_vpc_endpoint(vpc_id, subnet_ids, security_group_id, region, service_name):
                 ec2 = boto3.client('ec2', region_name=region)
@@ -1384,6 +1396,22 @@ Resources:
 
                 print("Create VPC Endpoint Response:", response)
                 return vpc_endpoint_id, dns_name
+                
+            def check_hosted_zone_exists(vpc_id, private_hosted_zone, region):
+                route53 = boto3.client('route53')
+                response = route53.list_hosted_zones_by_vpc(VPCId=vpc_id, VPCRegion=region)
+                
+                hosted_zones = response.get('HostedZoneSummaries', [])
+                print(hosted_zones)
+                
+                # Add a dot at the end of the private_hosted_zone name
+                hosted_zone_name = private_hosted_zone + '.' if not private_hosted_zone.endswith('.') else private_hosted_zone
+                
+                # Check if the hosted zone exists with the specified name
+                hosted_zone_present = any(zone['Name'] == hosted_zone_name for zone in hosted_zones)
+                print(hosted_zone_present)
+                
+                return hosted_zone_present
 
             def create_hosted_zone(vpc_id, region, private_hosted_zone):
                 route53 = boto3.client('route53')
@@ -1435,6 +1463,17 @@ Resources:
                     print(f"Error creating CNAME record: {e}")
                     raise
                     
+            def check_s3_gateway_endpoint_exists(vpc_id, region):
+                ec2 = boto3.client('ec2', region_name=region)
+                response = ec2.describe_vpc_endpoints(
+                    Filters=[
+                        {'Name': 'vpc-id', 'Values': [vpc_id]},
+                        {'Name': 'service-name', 'Values': ['com.amazonaws.' + region + '.s3']}
+                    ]
+                )
+                endpoints = response.get('VpcEndpoints', [])
+                return bool(endpoints)
+                    
             def create_s3_gateway_endpoint(vpc_id, route_table_id, region):
                 ec2_client = boto3.client('ec2', region_name=region)
 
@@ -1446,6 +1485,17 @@ Resources:
                 )
 
                 return response
+                
+            def check_sqs_interface_endpoint_exists(vpc_id, region):
+                ec2 = boto3.client('ec2', region_name=region)
+                response = ec2.describe_vpc_endpoints(
+                    Filters=[
+                        {'Name': 'vpc-id', 'Values': [vpc_id]},
+                        {'Name': 'service-name', 'Values': ['com.amazonaws.' + region + '.sqs']}
+                    ]
+                )
+                endpoints = response.get('VpcEndpoints', [])
+                return bool(endpoints)
 
             def create_sqs_interface_endpoint(vpc_id, subnet_ids, security_group_id, region):
                 client = boto3.client('ec2', region_name=region)
@@ -1459,6 +1509,17 @@ Resources:
                 )
 
                 return response
+                
+            def check_secretmanager_interface_endpoint_exists(vpc_id, region):
+                ec2 = boto3.client('ec2', region_name=region)
+                response = ec2.describe_vpc_endpoints(
+                    Filters=[
+                        {'Name': 'vpc-id', 'Values': [vpc_id]},
+                        {'Name': 'service-name', 'Values': ['com.amazonaws.' + region + '.secretsmanager']}
+                    ]
+                )
+                endpoints = response.get('VpcEndpoints', [])
+                return bool(endpoints)
 
             def create_secretmanager_interface_endpoint(vpc_id, subnet_ids, security_group_id, region):
                 client = boto3.client('ec2', region_name=region)
@@ -1472,6 +1533,17 @@ Resources:
                 )
 
                 return response
+                
+            def check_kms_interface_endpoint_exists(vpc_id, region):
+                ec2 = boto3.client('ec2', region_name=region)
+                response = ec2.describe_vpc_endpoints(
+                    Filters=[
+                        {'Name': 'vpc-id', 'Values': [vpc_id]},
+                        {'Name': 'service-name', 'Values': ['com.amazonaws.' + region + '.kms']}
+                    ]
+                )
+                endpoints = response.get('VpcEndpoints', [])
+                return bool(endpoints)
 
             def create_kms_interface_endpoint(vpc_id, subnet_ids, security_group_id, region):
                 client = boto3.client('ec2', region_name=region)
@@ -1498,35 +1570,61 @@ Resources:
                 
                 try:
                     security_group_id = create_security_group(vpc_id, 'Elastic Proxy SecurityGroup')
-                    vpc_endpoint_id, dns_name = create_vpc_endpoint(vpc_id, subnet_ids, security_group_id, region, service_name)
-                    hosted_zone_id = create_hosted_zone(vpc_id, region, private_hosted_zone)
-
-                    # Use the DNS name obtained from create_vpc_endpoint function
-                    if dns_name is not None:
-                        create_cname_record(hosted_zone_id, region, dns_name)
+                    # Check if VPC endpoint already exists
+                    if not check_vpc_endpoint_exists(vpc_id, service_name):
+                        # VPC endpoint doesn't exist, create it
+                        vpc_endpoint_id, dns_name = create_vpc_endpoint(vpc_id, subnet_ids, security_group_id, region, service_name)
                     else:
-                        raise ValueError("VpcEndpoint DNS entry is None.")
+                        print(f"VPC endpoint for service {service_name} already exists in VPC {vpc_id}. Skipping creation.")
+                        dns_name = None
+                   
+                    # Check if hosted zone already exists
+                    if not check_hosted_zone_exists(vpc_id, private_hosted_zone, region):
+                        # Hosted zone doesn't exist, create it
+                        hosted_zone_id = create_hosted_zone(vpc_id, region, private_hosted_zone)
+                        # Use the DNS name obtained from create_vpc_endpoint function
+                        if dns_name is not None:
+                            create_cname_record(hosted_zone_id, region, dns_name)
+                        else:
+                            print("VpcEndpoint DNS entry is None.")
+                    else:
+                        print("Hosted zone already exists. Skipping creation.")
 
-                    # Create S3 Gateway VPC endpoint
-                    s3_response = create_s3_gateway_endpoint(vpc_id, route_table_id, region)
-                    print("S3 Gateway VPC Endpoint created successfully:")
-                    print(s3_response)
+                    # Check if S3 Gateway endpoint already exists
+                    if not check_s3_gateway_endpoint_exists(vpc_id, region):
+                        # S3 Gateway endpoint doesn't exist, create it
+                        s3_response = create_s3_gateway_endpoint(vpc_id, route_table_id, region)
+                        print("S3 Gateway VPC Endpoint created successfully:")
+                        print(s3_response)
+                    else:
+                        print("S3 Gateway endpoint already exists. Skipping creation.")
 
-                    # Create SQS Interface VPC endpoint
-                    sqs_response = create_sqs_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
-                    print("SQS Interface VPC Endpoint created successfully:")
-                    print(sqs_response)
+                    # Check if SQS Interface endpoint already exists
+                    if not check_sqs_interface_endpoint_exists(vpc_id, region):
+                        # SQS Interface endpoint doesn't exist, create it
+                        sqs_response = create_sqs_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
+                        print("SQS Interface VPC Endpoint created successfully:")
+                        print(sqs_response)
+                    else:
+                        print("SQS Interface endpoint already exists. Skipping creation.")
 
-                    # Create Secret Manager Interface VPC endpoint
-                    ssm_response = create_secretmanager_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
-                    print("Secret Manager Interface VPC Endpoint created successfully:")
-                    print(ssm_response)
+                    # Check if Secret Manager Interface endpoint already exists
+                    if not check_secretmanager_interface_endpoint_exists(vpc_id, region):
+                        # Secret Manager Interface endpoint doesn't exist, create it
+                        ssm_response = create_secretmanager_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
+                        print("Secret Manager Interface VPC Endpoint created successfully:")
+                        print(ssm_response)
+                    else:
+                        print("Secret Manager Interface endpoint already exists. Skipping creation.")
 
-                    # Create Key Management service Interface VPC endpoint
-                    kms_response = create_kms_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
-                    print("Key Management Service Interface VPC Endpoint created successfully:")
-                    print(kms_response)
-
+                    # Check if KMS Interface endpoint already exists
+                    if not check_kms_interface_endpoint_exists(vpc_id, region):
+                        # KMS Interface endpoint doesn't exist, create it
+                        kms_response = create_kms_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
+                        print("Key Management Service Interface VPC Endpoint created successfully:")
+                        print(kms_response)
+                    else:
+                        print("KMS Interface endpoint already exists. Skipping creation.")
                     
                     cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
                 except Exception as e:

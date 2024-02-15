@@ -1,33 +1,27 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: Creates logging buckets for S3 access logs, ELB access logs, replicated to central log-archive account.
+Description: This template creates logging buckets for S3 access logs and ELB access logs, replicated to a central log-archive account.
              
-Parameters:
-    AWSOrganizationID:
-      Type: String
-      Description: >
-        The ID of your AWS Organization.
-        Example: o-0123456789abcdef0
-      
+Parameters: 
     LoggingAccountId:
       Type: 'String'
-      Description: AWS Account Id of the log-archive account.
+      Description: AWS Account Id where the elastic-log-ingestion-control-tower serverless application is deployed.
       AllowedPattern: "[0-9]{12}"
       
     LoggingRegion:
       Type: 'String'
       Description: >
-        What region are the log buckets in? Region of the central logging bucket created in the Log archive account.
-        Example: us-east-1 (If the central logging bucket are in US East (N. Virginia) us-east-1 AWS Region
+        Specify the AWS Region where you have deployed the elastic-log-ingestion-control-tower serverless application.
+        Example: us-east-1 (If the elastic-log-ingestion-control-tower serverless application is deployed in the North Virginia Region).
         
     ElasticCloudID:
       Type: String
-      Description: Cloud ID of Elastic Cluster Deployment
+      Description: The unique Cloud ID for your Elasticsearch cluster deployment.
       NoEcho: true
 
     ElasticAPIKey:
       Type: String
-      Description: RESTful API to provide access to deployment CRUD actions
+      Description: The RESTful API key providing access to deployment CRUD actions.
       NoEcho: true
       
     IngestKinesisLogs:
@@ -81,7 +75,7 @@ Parameters:
       Description: 'Specify the IDs of the route tables to be updated for the S3 bucket Gateway VPC Endpoint. Provide values only if deploying the Elastic serverless forwarder in a VPC.'
       ConstraintDescription: 'Please enter valid Route Table IDs.'
       
-    IngestViaKinesisFirehose:
+    EnableKinesisFirehoseIngestion:
       Type: String
       Default: "No"
       AllowedValues:
@@ -108,13 +102,27 @@ Parameters:
       Description: >-
         If you want to ingest EC2 logs to Elastic Cloud, then provide the Kibana
         URL in this section.
-      
-    EnrollmentToken:
+    
+    ElasticsearchUsername:
       Type: String
       Default: ''
-      Description: >-
-        If you want to ingest EC2 logs to Elastic Cloud, then provide the
-        Enrollment Token in this section.
+      Description: "Specify the username for accessing the Elasticsearch deployment."
+      
+    ElasticsearchPassword:
+      Type: String
+      Default: ''
+      Description: "Specify the password for accessing the Elasticsearch deployment."
+      NoEcho: true
+      
+    ElasticSearchDeploymentID:
+      Type: String
+      Default: ''
+      Description: "Specify the unique Deployment ID associated with your Elasticsearch deployment."
+      
+    DeploymentVersion:
+      Type: String
+      Default: ''
+      Description: "Specify the version of the Elasticsearch deployment."
     
 Conditions:
   ShouldIngestKinesisDataStream: !Equals [!Ref IngestKinesisLogs, "Yes"]
@@ -126,7 +134,7 @@ Conditions:
   ShouldDeployVPCResource: !And
     - !Equals [!Ref DeployInVPC, "Yes"]
     - Condition: ShouldDeployElasticServerlessForwarder
-  ShouldIngestLogsViaKinesisFireHose: !Equals [!Ref IngestViaKinesisFirehose, "Yes"]
+  ShouldIngestLogsViaKinesisFireHose: !Equals [!Ref EnableKinesisFirehoseIngestion, "Yes"]
   ShouldIngestEC2InstanceLogs: !Equals [!Ref IngestEC2Logs, "Yes"]
     
 Metadata:
@@ -137,10 +145,6 @@ Metadata:
       Parameters:
       - LoggingAccountId
       - LoggingRegion
-    - Label:
-        default: AWS Organization ID
-      Parameters:
-      - AWSOrganizationID
     - Label:
         default: Elastic Cluster Deployment Details
       Parameters:
@@ -168,11 +172,14 @@ Metadata:
       Parameters:
       - IngestEC2Logs
       - KibanaURL
-      - EnrollmentToken
+      - ElasticsearchUsername
+      - ElasticsearchPassword
+      - ElasticSearchDeploymentID
+      - DeploymentVersion
     - Label:
         default: Ingest Logs Via AWS KinesisFireHose delivery stream (Optional)
       Parameters:
-      - IngestViaKinesisFirehose
+      - EnableKinesisFirehoseIngestion
       - ElasticEndpointURL
     ParameterLabels:
       ElasticCloudID:
@@ -183,8 +190,6 @@ Metadata:
         default: Account ID
       LoggingRegion:
         default: Logging Region
-      AWSOrganizationID:
-        default: Organization ID
       IngestKinesisLogs:
         default: Ingest Kinesis Logs
       KinesisDataStreamArn:
@@ -207,10 +212,16 @@ Metadata:
         default: Ingest EC2 Logs
       KibanaURL:
         Default: Kibana URL
-      EnrollmentToken:
-        Default: Enrollment Token
-      IngestViaKinesisFirehose:
-        default: Ingest Via Kinesis Firehose Delivery stream
+      ElasticsearchUsername:
+        Default: Elasticsearch Username
+      ElasticsearchPassword:
+        Default: Elasticsearch Password
+      ElasticSearchDeploymentID:
+        Default: ElasticSearch DeploymentID
+      DeploymentVersion:
+        Default: Deployment Version
+      EnableKinesisFirehoseIngestion:
+        default: Enable Kinesis Firehose Ingestion
 
 Mappings:
   VPCServiceName:
@@ -386,7 +397,7 @@ Resources:
     Type: AWS::KMS::Alias
     Condition: ShouldDeployElasticServerlessForwarder
     Properties:
-      AliasName: alias/ElasticSSMSecretEncryptionKey
+      AliasName: alias/ElasticHelperSSMSecretEncryptionKey
       TargetKeyId: !Ref ElasticSSMSecretEncryptionKey
         
   S3ReplicationRole:        #Role for S3 service to replicated objects to Log Archive S3 Bucket
@@ -455,10 +466,6 @@ Resources:
               - arn:aws:s3:::elastic-central-emr-access-logs-*/*
               - arn:aws:s3:::elastic-central-nf-access-logs-*/*
               - arn:aws:s3:::elastic-central-cloudfront-access-logs-*/*
-            Condition:
-              StringEquals:
-                aws:PrincipalOrgID:
-                  - !Ref AWSOrganizationID
       ManagedPolicyName: "Elastic-AWS-S3-Replication"
       Roles: 
         - 
@@ -871,7 +878,7 @@ Resources:
     Condition: ShouldDeployElasticServerlessForwarder
     DeletionPolicy: Retain
     Properties:
-      BucketName: !Sub aws-config-bucket-${AWS::AccountId}-${AWS::Region}      
+      BucketName: !Sub aws-helper-config-bucket-${AWS::AccountId}-${AWS::Region}      
       VersioningConfiguration:
         Status: Enabled
 
@@ -914,7 +921,6 @@ Resources:
     - S3ConfigFileBucketPolicy
     - ElasticSecret
     Properties:
-      FunctionName: !Sub Elastic-BootStrap-Lambda-${AWS::AccountId}-${AWS::Region}
       Handler: lambda_function.lambda_handler
       Role: !GetAtt ElasticBootstrapLambdaExecutionRole.Arn
       Runtime: python3.11
@@ -1016,12 +1022,10 @@ Resources:
             - "route53:CreateHostedZone"
             - "route53:ChangeResourceRecordSets"
             - "route53:GetChange"
-            - "lambda:InvokeFunction"
             - "ec2:DescribeVpcs"
-            - "cloudformation:SignalResource"
-            - "cloudformation:DescribeStackResources"
-            - "cloudformation:DescribeStackEvents"
-            - "s3:*"
+            - "s3:PutObject"
+            - "route53:ListHostedZonesByName"
+            - "route53:ListHostedZonesByVPC"
             Resource: "*" 
       Roles: 
         - Ref: "ServerlessLambdaExecutionRole"
@@ -1052,6 +1056,8 @@ Resources:
       Runtime: python3.8
       InlineCode: |
             import boto3
+            import boto3
+            import boto3
             import os
             import uuid
             import random
@@ -1062,7 +1068,7 @@ Resources:
                 # Generate a random suffix for the group name
                 random_suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
                 group_name = f'ElasticProxySecurityGroup_{random_suffix}'
-                
+                            
                 ec2 = boto3.resource('ec2')
                 security_group = ec2.create_security_group(
                     VpcId=vpc_id,
@@ -1102,8 +1108,19 @@ Resources:
                     raise ValueError("VpcEndpoint DNS entry is None.")
 
                 return dns_name
+                            
+            def check_vpc_endpoint_exists(vpc_id, service_name):
+                ec2 = boto3.client('ec2')
+                response = ec2.describe_vpc_endpoints(
+                    Filters=[
+                        {'Name': 'vpc-id', 'Values': [vpc_id]},
+                        {'Name': 'service-name', 'Values': [service_name]}
+                    ]
+                )
+                endpoints = response.get('VpcEndpoints', [])
+                return bool(endpoints)
 
-            def create_vpc_endpoint(vpc_id, subnet_ids, security_group_id, region, service_name):
+            def create_vpc_endpoint(vpc_id, subnet_ids, security_group_id, region, service_name):    
                 ec2 = boto3.client('ec2', region_name=region)
                 response = ec2.create_vpc_endpoint(
                     VpcId=vpc_id,
@@ -1112,7 +1129,7 @@ Resources:
                     VpcEndpointType='Interface',
                     SecurityGroupIds=[security_group_id]
                 )
-                
+                            
                 # Ensure 'VpcEndpointId' is present in the response
                 vpc_endpoint_id = response.get('VpcEndpoint', {}).get('VpcEndpointId')
                 if not vpc_endpoint_id:
@@ -1123,6 +1140,22 @@ Resources:
 
                 print("Create VPC Endpoint Response:", response)
                 return vpc_endpoint_id, dns_name
+                        
+            def check_hosted_zone_exists(vpc_id, private_hosted_zone, region):
+                route53 = boto3.client('route53')
+                response = route53.list_hosted_zones_by_vpc(VPCId=vpc_id, VPCRegion=region)
+                
+                hosted_zones = response.get('HostedZoneSummaries', [])
+                print(hosted_zones)
+                
+                # Add a dot at the end of the private_hosted_zone name
+                hosted_zone_name = private_hosted_zone + '.' if not private_hosted_zone.endswith('.') else private_hosted_zone
+                
+                # Check if the hosted zone exists with the specified name
+                hosted_zone_present = any(zone['Name'] == hosted_zone_name for zone in hosted_zones)
+                print(hosted_zone_present)
+                
+                return hosted_zone_present
 
             def create_hosted_zone(vpc_id, region, private_hosted_zone):
                 route53 = boto3.client('route53')
@@ -1173,7 +1206,18 @@ Resources:
                 except Exception as e:
                     print(f"Error creating CNAME record: {e}")
                     raise
-                    
+                                
+            def check_s3_gateway_endpoint_exists(vpc_id, region):
+                ec2 = boto3.client('ec2', region_name=region)
+                response = ec2.describe_vpc_endpoints(
+                    Filters=[
+                        {'Name': 'vpc-id', 'Values': [vpc_id]},
+                        {'Name': 'service-name', 'Values': ['com.amazonaws.' + region + '.s3']}
+                    ]
+                )
+                endpoints = response.get('VpcEndpoints', [])
+                return bool(endpoints)
+                        
             def create_s3_gateway_endpoint(vpc_id, route_table_id, region):
                 ec2_client = boto3.client('ec2', region_name=region)
 
@@ -1185,6 +1229,17 @@ Resources:
                 )
 
                 return response
+                
+            def check_kinesis_interface_endpoint_exists(vpc_id, region):
+                ec2 = boto3.client('ec2', region_name=region)
+                response = ec2.describe_vpc_endpoints(
+                    Filters=[
+                        {'Name': 'vpc-id', 'Values': [vpc_id]},
+                        {'Name': 'service-name', 'Values': ['com.amazonaws.' + region + '.kinesis-streams']}
+                    ]
+                )
+                endpoints = response.get('VpcEndpoints', [])
+                return bool(endpoints)
 
             def create_kinesis_data_stream_interface_endpoint(vpc_id, subnet_ids, security_group_id, region):
                 client = boto3.client('ec2', region_name=region)
@@ -1198,6 +1253,17 @@ Resources:
                 )
 
                 return response
+                
+            def check_secretmanager_interface_endpoint_exists(vpc_id, region):
+                ec2 = boto3.client('ec2', region_name=region)
+                response = ec2.describe_vpc_endpoints(
+                    Filters=[
+                        {'Name': 'vpc-id', 'Values': [vpc_id]},
+                        {'Name': 'service-name', 'Values': ['com.amazonaws.' + region + '.secretsmanager']}
+                    ]
+                )
+                endpoints = response.get('VpcEndpoints', [])
+                return bool(endpoints)
 
             def create_secretmanager_interface_endpoint(vpc_id, subnet_ids, security_group_id, region):
                 client = boto3.client('ec2', region_name=region)
@@ -1211,6 +1277,17 @@ Resources:
                 )
 
                 return response
+                            
+            def check_kms_interface_endpoint_exists(vpc_id, region):
+                ec2 = boto3.client('ec2', region_name=region)
+                response = ec2.describe_vpc_endpoints(
+                    Filters=[
+                        {'Name': 'vpc-id', 'Values': [vpc_id]},
+                        {'Name': 'service-name', 'Values': ['com.amazonaws.' + region + '.kms']}
+                    ]
+                )
+                endpoints = response.get('VpcEndpoints', [])
+                return bool(endpoints)
 
             def create_kms_interface_endpoint(vpc_id, subnet_ids, security_group_id, region):
                 client = boto3.client('ec2', region_name=region)
@@ -1225,6 +1302,17 @@ Resources:
 
                 return response
 
+            def check_cw_logs_interface_endpoint_exists(vpc_id, region):
+                ec2 = boto3.client('ec2', region_name=region)
+                response = ec2.describe_vpc_endpoints(
+                    Filters=[
+                        {'Name': 'vpc-id', 'Values': [vpc_id]},
+                        {'Name': 'service-name', 'Values': ['com.amazonaws.' + region + '.logs']}
+                    ]
+                )
+                endpoints = response.get('VpcEndpoints', [])
+                return bool(endpoints)
+
             def create_cw_logs_interface_endpoint(vpc_id, subnet_ids, security_group_id, region):
                 client = boto3.client('ec2', region_name=region)
 
@@ -1237,6 +1325,17 @@ Resources:
                 )
 
                 return response
+                
+            def check_sqs_interface_endpoint_exists(vpc_id, region):
+                ec2 = boto3.client('ec2', region_name=region)
+                response = ec2.describe_vpc_endpoints(
+                    Filters=[
+                        {'Name': 'vpc-id', 'Values': [vpc_id]},
+                        {'Name': 'service-name', 'Values': ['com.amazonaws.' + region + '.sqs']}
+                    ]
+                )
+                endpoints = response.get('VpcEndpoints', [])
+                return bool(endpoints)
                     
             def create_sqs_interface_endpoint(vpc_id, subnet_ids, security_group_id, region):
                 client = boto3.client('ec2', region_name=region)
@@ -1259,66 +1358,95 @@ Resources:
                 service_name = os.getenv('ServiceName')
                 private_hosted_zone = os.getenv('Private_Hosted_Zone')
                 responseData = {}
-           
                 
                 try:
                     security_group_id = create_security_group(vpc_id, 'Elastic Proxy SecurityGroup')
-                    vpc_endpoint_id, dns_name = create_vpc_endpoint(vpc_id, subnet_ids, security_group_id, region, service_name)
-                    hosted_zone_id = create_hosted_zone(vpc_id, region, private_hosted_zone)
-
-                    # Use the DNS name obtained from create_vpc_endpoint function
-                    if dns_name is not None:
-                        create_cname_record(hosted_zone_id, region, dns_name)
+                    # Check if VPC endpoint already exists
+                    if not check_vpc_endpoint_exists(vpc_id, service_name):
+                        # VPC endpoint doesn't exist, create it
+                        vpc_endpoint_id, dns_name = create_vpc_endpoint(vpc_id, subnet_ids, security_group_id, region, service_name)
                     else:
-                        raise ValueError("VpcEndpoint DNS entry is None.")
+                        print(f"VPC endpoint for service {service_name} already exists in VPC {vpc_id}. Skipping creation.")
+                        dns_name = None
                         
-                    # Create S3 Gateway VPC endpoint
-                    s3_response = create_s3_gateway_endpoint(vpc_id, route_table_id, region)
-                    print("S3 Gateway VPC Endpoint created successfully:")
-                    print(s3_response)
+                    # Check if hosted zone already exists
+                    if not check_hosted_zone_exists(vpc_id, private_hosted_zone, region):
+                        # Hosted zone doesn't exist, create it
+                        hosted_zone_id = create_hosted_zone(vpc_id, region, private_hosted_zone)
+                        # Use the DNS name obtained from create_vpc_endpoint function
+                        if dns_name is not None:
+                            create_cname_record(hosted_zone_id, region, dns_name)
+                        else:
+                            print("VpcEndpoint DNS entry is None.")
+                    else:
+                        print("Hosted zone already exists. Skipping creation.")
                     
-                    # Create SQS Interface VPC endpoint
-                    sqs_response = create_sqs_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
-                    print("SQS Interface VPC Endpoint created successfully:")
-                    print(sqs_response)
-
+                    # Check if S3 Gateway endpoint already exists
+                    if not check_s3_gateway_endpoint_exists(vpc_id, region):
+                        # S3 Gateway endpoint doesn't exist, create it
+                        s3_response = create_s3_gateway_endpoint(vpc_id, route_table_id, region)
+                        print("S3 Gateway VPC Endpoint created successfully:")
+                        print(s3_response)
+                    else:
+                        print("S3 Gateway endpoint already exists. Skipping creation.")
+                    
+                    # Check if SQS Interface endpoint already exists
+                    if not check_sqs_interface_endpoint_exists(vpc_id, region):
+                        # SQS Interface endpoint doesn't exist, create it
+                        sqs_response = create_sqs_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
+                        print("SQS Interface VPC Endpoint created successfully:")
+                        print(sqs_response)
+                    else:
+                        print("SQS Interface endpoint already exists. Skipping creation.")
+                    
                     # Check if user wants to ingest Kinesis logs based on a parameter
                     ingest_kinesis_logs = os.getenv('INGEST_KINESIS_LOGS', 'No').strip().lower()
 
                     if ingest_kinesis_logs == 'yes':
-
                         # Create Kinesis datastream Interface VPC endpoint
-                        kinesis_response = create_kinesis_data_stream_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
-                        print("Kinesis Data Stream VPC Endpoint created successfully:")
-                        print(kinesis_response)
-
+                        if not check_kinesis_interface_endpoint_exists(vpc_id, region):
+                            kinesis_response = create_kinesis_data_stream_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
+                            print("Kinesis Data Stream VPC Endpoint created successfully:")
+                            print(kinesis_response)
+                        else:
+                            print("Kinesis Data Stream Interface endpoint already exists. Skipping creation.")
                     else:
                         print("Not creating Kinesis Data Stream endpoint.")
 
-                    # Create Secret Manager Interface VPC endpoint
-                    ssm_response = create_secretmanager_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
-                    print("Secret Manager Interface VPC Endpoint created successfully:")
-                    print(ssm_response)
+                    # Check if Secret Manager Interface endpoint already exists
+                    if not check_secretmanager_interface_endpoint_exists(vpc_id, region):
+                        # Secret Manager Interface endpoint doesn't exist, create it
+                        ssm_response = create_secretmanager_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
+                        print("Secret Manager Interface VPC Endpoint created successfully:")
+                        print(ssm_response)
+                    else:
+                        print("Secret Manager Interface endpoint already exists. Skipping creation.")
 
-                    # Create Key Management service Interface VPC endpoint
-                    kms_response = create_kms_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
-                    print("Key Management Service Interface VPC Endpoint created successfully:")
-                    print(kms_response)
+                    # Check if KMS Interface endpoint already exists
+                    if not check_kms_interface_endpoint_exists(vpc_id, region):
+                        # KMS Interface endpoint doesn't exist, create it
+                        kms_response = create_kms_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
+                        print("Key Management Service Interface VPC Endpoint created successfully:")
+                        print(kms_response)
+                    else:
+                        print("KMS Interface endpoint already exists. Skipping creation.")
 
                     # Check if user wants to ingest Cloudwatch logs based on a parameter
                     ingest_cloudwatch_logs = os.getenv('INGEST_CLOUDWATCH_LOGS', 'No').strip().lower()
 
                     if ingest_cloudwatch_logs == 'yes':
-
                         # Create Cloudwatch Log Interface VPC endpoint
-                        logs_response = create_cw_logs_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
-                        print("CloudWatch Logs Interface VPC Endpoint created successfully:")
-                        print(logs_response)
-
+                        if not check_cw_logs_interface_endpoint_exists(vpc_id, region):
+                            logs_response = create_cw_logs_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
+                            print("CloudWatch Logs Interface VPC Endpoint created successfully:")
+                            print(logs_response)
+                        else:
+                            print("CloudWatch Logs Interface endpoint already exists. Skipping creation.")
                     else:
                         print("Not creating Kinesis Data Stream endpoint.")
                     
                     cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+
                 except Exception as e:
                     # Send a failure response with the error reason
                     cfnresponse.send(event, context, cfnresponse.FAILED, responseData, reason=str(e))
@@ -1536,7 +1664,10 @@ Resources:
 
                 # Extract parameters from the Lambda input
                 kibana_url = os.getenv('KibanaURL')
-                enrollment_token = os.getenv('EnrollmentToken')
+                elasticsearch_username = os.getenv('ELASTICSEARCHUSERNAME')
+                elasticsearch_password = os.getenv('ELASTICSEARCHPASSWORD')
+                elasticsearch_deploymentid = os.getenv('ElasticSearchDeploymentID')
+                elasticsearch_deploymentversion = os.getenv('DeploymentVersion')
                 region = os.getenv('REGION')
                 ami_id = os.getenv('AMIID')
 
@@ -1562,8 +1693,11 @@ Resources:
                         TemplateBody=template_body,
                         Parameters=[
                             {'ParameterKey': 'KibanaURL', 'ParameterValue': kibana_url},
-                            {'ParameterKey': 'EnrollmentToken', 'ParameterValue': enrollment_token},
-                            {'ParameterKey': 'AMIID', 'ParameterValue': ami_id}
+                            {'ParameterKey': 'AMIID', 'ParameterValue': ami_id},
+                            {'ParameterKey': 'ELASTICSEARCHUSERNAME', 'ParameterValue': elasticsearch_username},
+                            {'ParameterKey': 'ELASTICSEARCHPASSWORD', 'ParameterValue': elasticsearch_password},
+                            {'ParameterKey': 'ElasticSearchDeploymentID', 'ParameterValue': elasticsearch_deploymentid},
+                            {'ParameterKey': 'DeploymentVersion', 'ParameterValue': elasticsearch_deploymentversion},
                         ],
                         Capabilities=['CAPABILITY_NAMED_IAM']  # Add capabilities if needed
                     )
@@ -1585,7 +1719,10 @@ Resources:
               - ami
           REGION: !Sub ${AWS::Region}
           KibanaURL: !Ref KibanaURL
-          EnrollmentToken: !Ref EnrollmentToken
+          ELASTICSEARCHUSERNAME: !Ref ElasticsearchUsername
+          ELASTICSEARCHPASSWORD: !Ref ElasticsearchPassword
+          ElasticSearchDeploymentID: !Ref ElasticSearchDeploymentID
+          DeploymentVersion: !Ref DeploymentVersion
           
   TriggersElasticAgentLambdaFunction:
     Type: 'Custom::RunCode'
