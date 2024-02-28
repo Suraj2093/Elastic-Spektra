@@ -212,7 +212,7 @@ Mappings:
       
 Resources:
   ElasticSecret:
-    Type: AWS::SecretsManager::Secret       #AWS Secret Manager to store Elastic Cloud ID & API Key encrypted with KMS 
+    Type: AWS::SecretsManager::Secret       # AWS Secrets Manager Secret for storing Elastic Cloud & API key credentials. 
     DependsOn: ElasticSSMSecretEncryptionKey
     Properties:
       Name: !Sub "ElasticCloudSecret-${AWS::StackName}"
@@ -223,7 +223,7 @@ Resources:
           "APIKey": "${ElasticAPIKey}"
         }
         
-  ElasticCloudTrailSQS:       #SQS queue for the central CloudTrail logs bucket and receive notifications upon the addition of new objects.
+  ElasticCloudTrailSQS:       # SQS queue for centralized CloudTrail logs
     Type: AWS::SQS::Queue
     Properties:
       QueueName: Elastic-SQS-CloudTrail-Config
@@ -231,7 +231,7 @@ Resources:
       KmsMasterKeyId: !Ref ElasticSQSKMSKey
       KmsDataKeyReusePeriodSeconds: 1800
       
-  ElasticCloudTrailSQSPolicy:     #Defines the permissions for the SQS queue created for Cloudtrail logs bucket.
+  ElasticCloudTrailSQSPolicy:     # Access policy for the CloudTrail SQS queue. 
     Type: AWS::SQS::QueuePolicy
     Properties:
       Queues:
@@ -252,7 +252,7 @@ Resources:
                 aws:SourceArn: 
                   - !Ref CloudTrailBucketARN
 
-  ElbSQS:       #SQS queue for the central Elastic Load Balancer logs bucket and receive notifications upon the addition of new objects.
+  ElbSQS:       # SQS queue for centralized Elastic Load Balancer logs
     Type: AWS::SQS::Queue
     Properties:
       QueueName: Elastic-SQS-ElbLogs
@@ -260,7 +260,7 @@ Resources:
       KmsMasterKeyId: !Ref ElasticSQSKMSKey
       KmsDataKeyReusePeriodSeconds: 1800
       
-  ElbSQSPolicy:     #Queue policy for ElbSQS queue
+  ElbSQSPolicy:     # Access policy for the Elastic Load Balancer SQS queue.
     Type: AWS::SQS::QueuePolicy
     Properties:
       Queues:
@@ -281,7 +281,7 @@ Resources:
                 aws:SourceArn: 
                   - !Sub "arn:aws:s3:::elastic-central-elb-access-logs-${AWS::AccountId}-${AWS::Region}"
                   
-  ElasticS3SQS:        #Queue for S3 access log bucket
+  ElasticS3SQS:        # SQS queue for centralized S3 access logs.
     Type: AWS::SQS::Queue
     Properties:
       QueueName: Elastic-SQS-S3Logs
@@ -289,7 +289,7 @@ Resources:
       KmsMasterKeyId: !Ref ElasticSQSKMSKey
       KmsDataKeyReusePeriodSeconds: 1800
   
-  ElasticS3SQSPolicy:      #Queue policy for S3SQS queue
+  ElasticS3SQSPolicy:      # Access policy for the S3 access logs SQS queue.
     Type: AWS::SQS::QueuePolicy
     Properties:
       Queues:
@@ -310,7 +310,7 @@ Resources:
                 aws:SourceArn: 
                   - !Sub "arn:aws:s3:::elastic-central-s3-access-logs-${AWS::AccountId}-${AWS::Region}"
                   
-  VPCFlowLogsElasticSQS:
+  VPCFlowLogsElasticSQS:        # SQS queue for centralized VPC flow logs.
     Type: AWS::SQS::Queue
     Properties:
       QueueName: Elastic-SQS-VPCFlowLogs
@@ -318,7 +318,7 @@ Resources:
       KmsMasterKeyId: !Ref ElasticSQSKMSKey
       KmsDataKeyReusePeriodSeconds: 1800
 
-  VPCFlowLogsElasticSQSPolicy:
+  VPCFlowLogsElasticSQSPolicy:      # Access policy for the VPC flow logs SQS queue.
     Type: AWS::SQS::QueuePolicy
     Properties:
       Queues:
@@ -339,7 +339,7 @@ Resources:
                 aws:SourceArn: 
                   - !Sub "arn:aws:s3:::elastic-central-vpcflow-logging-${AWS::AccountId}-${AWS::Region}"
 
-  ElasticWafSQS:
+  ElasticWafSQS:        # SQS queue for centralized WAF logs.
     Type: AWS::SQS::Queue
     Properties:
       QueueName: "Elastic-SQS-WafLogs"
@@ -348,7 +348,7 @@ Resources:
         Ref: "ElasticSQSKMSKey"
       KmsDataKeyReusePeriodSeconds: 1800
   
-  ElasticWafSQSPolicy:
+  ElasticWafSQSPolicy:      # Access policy for the WAF SQS queue.
     Type: AWS::SQS::QueuePolicy
     Properties:
       Queues:
@@ -370,7 +370,7 @@ Resources:
                 aws:SourceArn:
                   - Fn::Sub: "arn:aws:s3:::elastic-central-waf-access-logs-${AWS::AccountId}-${AWS::Region}"
   
-  EmrSQS:       #Queue for Emr logs bucket
+  EmrSQS:       # SQS queue for centralized EMR logs
     Type: AWS::SQS::Queue
     Properties:
       QueueName: Elastic-SQS-EmrLogs
@@ -378,7 +378,7 @@ Resources:
       KmsMasterKeyId: !Ref ElasticSQSKMSKey
       KmsDataKeyReusePeriodSeconds: 1800
       
-  EmrSQSPolicy:     #Queue policy for EmrSQS queue
+  EmrSQSPolicy:     # Access policy for the EMR SQS queue.
     Type: AWS::SQS::QueuePolicy
     Properties:
       Queues:
@@ -399,7 +399,7 @@ Resources:
                 aws:SourceArn: 
                   - !Sub "arn:aws:s3:::elastic-central-emr-access-logs-${AWS::AccountId}-${AWS::Region}"
 
-  NfSQS:       #Queue for Network Firewall logs bucket
+  NfSQS:       # SQS queue for centralized Network Firewall logs.
     Type: AWS::SQS::Queue
     Properties:
       QueueName: Elastic-SQS-NFLogs
@@ -407,7 +407,7 @@ Resources:
       KmsMasterKeyId: !Ref ElasticSQSKMSKey
       KmsDataKeyReusePeriodSeconds: 1800
 
-  NfSQSPolicy:     #Queue policy for NFSQS queue
+  NfSQSPolicy:     # Access policy for the Network Firewall SQS queue.
     Type: AWS::SQS::QueuePolicy
     Properties:
       Queues:
@@ -428,7 +428,7 @@ Resources:
                 aws:SourceArn: 
                   - !Sub "arn:aws:s3:::elastic-central-nf-access-logs-${AWS::AccountId}-${AWS::Region}"
 
-  ElasticCloudfrontSQS:       #Queue for Cloudfront logs bucket
+  ElasticCloudfrontSQS:       # SQS queue for centralized CloudFront logs.
     Type: AWS::SQS::Queue
     Properties:
       QueueName: Elastic-SQS-Cloudfront-Config
@@ -436,7 +436,7 @@ Resources:
       KmsMasterKeyId: !Ref ElasticSQSKMSKey
       KmsDataKeyReusePeriodSeconds: 1800
   
-  ElasticCloudfrontSQSPolicy:     #Queue policy for Cloudfront queue
+  ElasticCloudfrontSQSPolicy:     # Access policy for the CloudFront SQS queue.
     Type: AWS::SQS::QueuePolicy
     Properties:
       Queues:
@@ -457,7 +457,7 @@ Resources:
                 aws:SourceArn: 
                   - !Sub "arn:aws:s3:::elastic-central-cloudfront-access-logs-${AWS::AccountId}-${AWS::Region}"
                 
-  S3AccessLoggingBucket:        #Central S3 access log collection bucket
+  S3AccessLoggingBucket:        # S3 bucket for centralized S3 access logs
     DeletionPolicy: Retain
     DependsOn: ElasticS3SQSPolicy
     Type: AWS::S3::Bucket
@@ -474,7 +474,7 @@ Resources:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
               
-  S3AccessLoggingBucketPolicy:
+  S3AccessLoggingBucketPolicy:      # Bucket policy for the S3 access logging bucket.
     Type: AWS::S3::BucketPolicy
     DependsOn: S3AccessLoggingBucket
     Properties:
@@ -505,7 +505,7 @@ Resources:
                 aws:PrincipalOrgID:
                   - !Ref AWSOrganizationID
   
-  VPCFlowLoggingBucket:  #Central VPC flow log collection bucket
+  VPCFlowLoggingBucket:     # S3 bucket for centralized VPC flow logs
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
     DependsOn: S3AccessLoggingBucket
@@ -529,7 +529,7 @@ Resources:
           - ExpirationInDays: 90
             Status: Enabled
 
-  VPCFlowLogsBucketPolicy:
+  VPCFlowLogsBucketPolicy:      # Bucket policy for the VPC flow logging bucket.
     Type: AWS::S3::BucketPolicy
     Properties:
       Bucket: !Ref VPCFlowLoggingBucket
@@ -559,7 +559,7 @@ Resources:
                 aws:PrincipalOrgID:
                   - !Ref AWSOrganizationID
                   
-  ElbCentralLoggingBucket:
+  ElbCentralLoggingBucket:      # S3 bucket for centralized ELB access logs
     DeletionPolicy: Retain
     DependsOn: 
       - ElbSQSPolicy
@@ -585,7 +585,7 @@ Resources:
           - ExpirationInDays: 90
             Status: Enabled
 
-  ElbBucketPolicy:
+  ElbBucketPolicy:      # Bucket policy for the ELB central logging bucket.
     Type: AWS::S3::BucketPolicy
     Properties:
       Bucket: !Ref ElbCentralLoggingBucket
@@ -615,7 +615,7 @@ Resources:
                 aws:PrincipalOrgID:
                   - !Ref AWSOrganizationID
   
-  WafCentralLoggingBucket:
+  WafCentralLoggingBucket:      # S3 bucket for centralized WAF access logs
     DeletionPolicy: Retain
     DependsOn:
       - "S3AccessLoggingBucket"
@@ -645,7 +645,7 @@ Resources:
           - ExpirationInDays: 90
             Status: "Enabled"
 
-  WafBucketPolicy:
+  WafBucketPolicy:      # Bucket policy for the WAF central logging bucket.
     Type: AWS::S3::BucketPolicy
     Properties:
       Bucket:
@@ -676,7 +676,7 @@ Resources:
                 aws:PrincipalOrgID:
                   - Ref: "AWSOrganizationID"
   
-  EmrCentralLoggingBucket:
+  EmrCentralLoggingBucket:      #  S3 bucket for centralized EMR logs
     DeletionPolicy: Retain
     DependsOn: 
       - EmrSQSPolicy
@@ -702,7 +702,7 @@ Resources:
           - ExpirationInDays: 90
             Status: Enabled
 
-  EmrBucketPolicy:
+  EmrBucketPolicy:      #  Bucket policy for the EMR central logging bucket.
     Type: AWS::S3::BucketPolicy
     Properties:
       Bucket: !Ref EmrCentralLoggingBucket
@@ -732,7 +732,7 @@ Resources:
                 aws:PrincipalOrgID:
                   - !Ref AWSOrganizationID
     
-  NfCentralLoggingBucket:
+  NfCentralLoggingBucket:       # S3 bucket for centralized Network Firewall logs
     DeletionPolicy: Retain
     DependsOn: 
       - NfSQSPolicy
@@ -758,7 +758,7 @@ Resources:
           - ExpirationInDays: 90
             Status: Enabled
 
-  NfBucketPolicy:
+  NfBucketPolicy:       # Bucket policy for the Network Firewall central logging bucket.
     Type: AWS::S3::BucketPolicy
     Properties:
       Bucket: !Ref NfCentralLoggingBucket
@@ -788,7 +788,7 @@ Resources:
                 aws:PrincipalOrgID:
                   - !Ref AWSOrganizationID
 
-  CloudfrontLoggingBucket:        #Cloudfront collection bucket
+  CloudfrontLoggingBucket:        # S3 bucket for centralized CloudFront logs
     DeletionPolicy: Retain
     DependsOn: 
       - ElasticCloudfrontSQSPolicy
@@ -814,7 +814,7 @@ Resources:
           - ExpirationInDays: 90
             Status: Enabled
               
-  CloudfrontLoggingBucketPolicy:
+  CloudfrontLoggingBucketPolicy:        # Bucket policy for the CloudFront logging bucket.
     Type: AWS::S3::BucketPolicy
     Properties:
       Bucket: !Ref CloudfrontLoggingBucket
@@ -844,7 +844,7 @@ Resources:
                 aws:PrincipalOrgID:
                   - !Ref AWSOrganizationID
 
-  ElasticServerlessForwarderEventMacro:
+  ElasticServerlessForwarderEventMacro:     # Serverless Application for elastic serverless forwarder event macro.
     Type: AWS::Serverless::Application
     Properties:
       Location:
@@ -855,7 +855,7 @@ Resources:
     Metadata:
       SamResourceId: ElasticServerlessForwarderEventMacro
 
-  ElasticServerlessForwarderApplication:
+  ElasticServerlessForwarderApplication:        # Serverless Application for elastic serverless forwarder application.
     Type: AWS::Serverless::Application
     Properties:
       Location:
@@ -935,7 +935,7 @@ Resources:
       SamResourceId: ElasticServerlessForwarderApplication
 
 
-  S3ConfigFileBucket:       #Bucket to store the config.yaml file
+  S3ConfigFileBucket:       # S3 Bucket for storing the config.yaml file.
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
     Properties:
@@ -943,7 +943,7 @@ Resources:
       VersioningConfiguration:
         Status: Enabled
 
-  S3ConfigFileBucketPolicy:
+  S3ConfigFileBucketPolicy:     # Bucket policy for S3ConfigFileBucket bucket which stores config.yaml file.
     Type: AWS::S3::BucketPolicy
     DependsOn: S3ConfigFileBucket
     Properties:
@@ -973,14 +973,15 @@ Resources:
                   - - 'arn:aws:s3:::'
                     - Ref: 'S3ConfigFileBucket'
 
-  ElasticGuardDutySQS:
+  ElasticGuardDutySQS:      # SQS queue for Elastic GuardDuty.
     Type: 'AWS::SQS::Queue'
     Properties:
       QueueName: Elastic-SQS-GuardDuty-Config
       VisibilityTimeout: 910
       KmsMasterKeyId: !Ref ElasticSQSKMSKey
       KmsDataKeyReusePeriodSeconds: 1800
-  ElasticGuardDutySQSPolicy:
+      
+  ElasticGuardDutySQSPolicy:        # Queue policy for Elastic GuardDuty SQS.
     Type: 'AWS::SQS::QueuePolicy'
     Properties:
       Queues:
@@ -1003,7 +1004,8 @@ Resources:
                 'aws:SourceArn':
                   - !Sub >-
                     arn:aws:s3:::elastic-central-guardduty-access-logs-${AWS::AccountId}-${AWS::Region}
-  GuardDutyArchiveLoggingBucket:
+                    
+  GuardDutyArchiveLoggingBucket:        #  S3 bucket for centralized GuardDuty logs collection.
     DeletionPolicy: Retain
     DependsOn: ElasticGuardDutySQSPolicy
     Type: 'AWS::S3::Bucket'
@@ -1021,7 +1023,8 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
-  GuardDutyLoggingBucketPolicy:
+              
+  GuardDutyLoggingBucketPolicy:     #  Bucket policy for GuardDuty logging bucket.
     Type: 'AWS::S3::BucketPolicy'
     DependsOn: GuardDutyArchiveLoggingBucket
     Properties:
@@ -1050,7 +1053,7 @@ Resources:
               StringNotEquals:
                 's3:x-amz-server-side-encryption': 'aws:kms'
                 
-  ElasticBootstrapLambdaForConfigFile:
+  ElasticBootstrapLambdaForConfigFile:      # Serverless function responsible for configuring the config.yaml file required for the Elastic serverless forwarder application.
     Type: 'AWS::Serverless::Function'
     DependsOn:
     - S3ConfigFileBucketPolicy
@@ -1096,7 +1099,7 @@ Resources:
           CloudTrail_S3_BUCKET_NAME: !Ref CloudTrailBucketName
           CloudTrail_SQS_QUEUE_ARN: !GetAtt ElasticCloudTrailSQS.Arn
 
-  ElasticBootstrapLambdaExecutionRole: 
+  ElasticBootstrapLambdaExecutionRole:      # IAM role for execution of Elastic Bootstrap Lambda function.
     Type: 'AWS::IAM::Role'
     Properties:
       AssumeRolePolicyDocument: 
@@ -1113,7 +1116,7 @@ Resources:
         - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
         - 'arn:aws:iam::aws:policy/AmazonS3FullAccess'
 
-  RolePolicies: 
+  RolePolicies:     #  IAM policy attached to the Elastic Bootstrap Lambda execution role.
     Type: 'AWS::IAM::Policy'
     Properties: 
       PolicyName: "ElasticBootstrapLambdaCustomPolicy"
@@ -1128,14 +1131,14 @@ Resources:
       Roles: 
         - Ref: "ElasticBootstrapLambdaExecutionRole"
 
-  TriggersElasticBootstrapLambdaFunction:
+  TriggersElasticBootstrapLambdaFunction:       # Custom resource to trigger the execution of the Elastic Bootstrap Lambda function.
     Type: 'Custom::RunCode'
     DependsOn: ElasticBootstrapLambdaForConfigFile
     DeletionPolicy: Retain  # Add this line to specify the deletion policy
     Properties:
       ServiceToken: !GetAtt ElasticBootstrapLambdaForConfigFile.Arn
       
-  ElasticSQSKMSKey:     # Create a KMS Key to encrypt the Queues
+  ElasticSQSKMSKey:     # KMS key for encrypting Elastic SQS queue messages
     Type: AWS::KMS::Key
     Properties:
       Description: Encrypt Elastic SQS queue messages
@@ -1204,13 +1207,13 @@ Resources:
               - 'kms:RevokeGrant'
             Resource: '*'
 
-  ElasticSQSKMSKeyAlias:
+  ElasticSQSKMSKeyAlias:        # Alias for the Elastic SQS KMS key.
     Type: AWS::KMS::Alias
     Properties:
       AliasName: alias/ElasticSQSKMSKey
       TargetKeyId: !Ref ElasticSQSKMSKey
  
-  ElasticSSMSecretEncryptionKey:     # Create a KMS Key to encrypt the Queues
+  ElasticSSMSecretEncryptionKey:     # AWS KMS Key for encrypting the secrets stored in the SSM Store.
     Type: AWS::KMS::Key
     Properties:
       Description: Encrypt the secrets stored in the SSM Store.
@@ -1238,13 +1241,13 @@ Resources:
               - 'kms:Decrypt'
             Resource: '*'
 
-  ElasticSSMSecretKMSKeyAlias:
+  ElasticSSMSecretKMSKeyAlias:      # Alias for the ElasticSSMSecretEncryptionKey.
     Type: AWS::KMS::Alias
     Properties:
       AliasName: alias/ElasticSSMSecretEncryptionKey
       TargetKeyId: !Ref ElasticSSMSecretEncryptionKey
       
-  ServerlessLambdaRolePolicies: 
+  ServerlessLambdaRolePolicies:     # IAM policy attached to the serverless Lambda execution role.
     Type: 'AWS::IAM::Policy'
     Condition: ShouldDeployElasticForwarderInVPC
     Properties: 
@@ -1262,12 +1265,14 @@ Resources:
             - "route53:ChangeResourceRecordSets"
             - "route53:GetChange"
             - "ec2:DescribeVpcs"
-            - "s3:*"
+            - "s3:PutObject"
+            - "route53:ListHostedZonesByName"
+            - "route53:ListHostedZonesByVPC"
             Resource: "*" 
       Roles: 
         - Ref: "BootstrapLambdaExecutionRole"
               
-  BootstrapLambdaExecutionRole:
+  BootstrapLambdaExecutionRole:     # # IAM role for executing the ElasticServerlessBootstrap lambda function.
     Type: 'AWS::IAM::Role'
     Condition: ShouldDeployElasticForwarderInVPC
     Properties:
@@ -1284,7 +1289,7 @@ Resources:
       ManagedPolicyArns:
         - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
   
-  ElasticForwarderSecurityGroup:
+  ElasticForwarderSecurityGroup:        # Security group for the Elastic serverless forwarder application.
     Type: AWS::EC2::SecurityGroup
     Condition: ShouldDeployElasticForwarderInVPC
     Properties:
@@ -1305,7 +1310,7 @@ Resources:
           ToPort: 9243
           CidrIp: 0.0.0.0/0
       
-  ElasticServerlessBootstrapFunction:
+  ElasticServerlessBootstrapFunction:       # Serverless function for creating VPC endpoints if forwarder is deployed in a VPC.
     Type: AWS::Serverless::Function
     Condition: ShouldDeployElasticForwarderInVPC
     Properties:
@@ -1648,7 +1653,7 @@ Resources:
           REGION: !Sub ${AWS::Region}
           ROUTE_TABLE_ID: !Join [',', !Ref RouteTableIds]
     
-  TriggersBootstrapLambda:
+  TriggersBootstrapLambda:      # Custom resource to trigger the execution of the Elastic Serverless Bootstrap Lambda function.
     Type: 'Custom::RunCode'
     Condition: ShouldDeployElasticForwarderInVPC
     DeletionPolicy: Retain

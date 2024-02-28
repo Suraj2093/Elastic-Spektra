@@ -87,6 +87,13 @@ Parameters:
       Type: String
       Default: ""
       Description: "Specify the endpoint URL of your Elastic deployment. This is the URL where your Elastic services are hosted. Note: Ensure this value is entered accurately to enable proper integration with your Elastic deployment."
+      
+    KinesisFireHoseDataStreamTag:
+      Type: String
+      Default: ""
+      Description: >
+        Provide a value for the tag to specify data streams for ingesting logs. 
+        Example: logs-aws.vpcflow-default for ingesting VPC flow logs.
 
     IngestEC2Logs:
       Type: String
@@ -181,6 +188,7 @@ Metadata:
       Parameters:
       - EnableKinesisFirehoseIngestion
       - ElasticEndpointURL
+      - KinesisFireHoseDataStreamTag
     ParameterLabels:
       ElasticCloudID:
         default: Elastic Cloud ID
@@ -222,6 +230,8 @@ Metadata:
         Default: Deployment Version
       EnableKinesisFirehoseIngestion:
         default: Enable Kinesis Firehose Ingestion
+      KinesisFireHoseDataStreamTag:
+        default: Kinesis FireHose DataStream Tag
 
 Mappings:
   VPCServiceName:
@@ -351,7 +361,7 @@ Mappings:
       ami: ami-0efcece6bed30fd98 
 
 Resources:
-  ElasticSecret:
+  ElasticSecret:        # AWS Secrets Manager Secret for storing Elastic Cloud & API key credentials.
     Type: AWS::SecretsManager::Secret
     DependsOn: ElasticSSMSecretEncryptionKey
     Condition: ShouldDeployElasticServerlessForwarder
@@ -364,7 +374,7 @@ Resources:
           "APIKey": "${ElasticAPIKey}"
         }
         
-  ElasticSSMSecretEncryptionKey:     # Create a KMS Key to encrypt the secrets in AWS SSM store
+  ElasticSSMSecretEncryptionKey:     # AWS KMS Key for encrypting the secrets stored in the SSM Store.
     Type: AWS::KMS::Key
     Condition: ShouldDeployElasticServerlessForwarder
     Properties:
@@ -393,14 +403,14 @@ Resources:
               - 'kms:Decrypt'
             Resource: '*'
 
-  ElasticSSMSecretKMSKeyAlias:
+  ElasticSSMSecretKMSKeyAlias:      # Alias for the ElasticSSMSecretEncryptionKey.
     Type: AWS::KMS::Alias
     Condition: ShouldDeployElasticServerlessForwarder
     Properties:
       AliasName: alias/ElasticHelperSSMSecretEncryptionKey
       TargetKeyId: !Ref ElasticSSMSecretEncryptionKey
         
-  S3ReplicationRole:        #Role for S3 service to replicated objects to Log Archive S3 Bucket
+  S3ReplicationRole:        # IAM Role for S3 service to replicate objects to a Log Archive S3 Bucket.
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument: 
@@ -416,7 +426,7 @@ Resources:
       Path: "/"
       RoleName: "elastic-AWS-S3-Replication"
 
-  S3ReplicationRolePolicy: 
+  S3ReplicationRolePolicy:      # Customer Managed IAM Policy for S3 replication role.
     Type: "AWS::IAM::ManagedPolicy"
     Properties: 
       PolicyDocument: 
@@ -472,7 +482,7 @@ Resources:
           Ref: "S3ReplicationRole"
 
 
-  S3ElbLocalAccessLogBucket:
+  S3ElbLocalAccessLogBucket:        # S3 Bucket for storing ELB access logs with replication configurations.
     Type: AWS::S3::Bucket
     DependsOn: S3LocalLoggingBucket
     DeletionPolicy: Retain
@@ -504,7 +514,7 @@ Resources:
       VersioningConfiguration:
         Status: Enabled
 
-  S3ElbAccessLogBucketPolicy:
+  S3ElbAccessLogBucketPolicy:       # Bucket policy for ELB access log bucket.
     Type: AWS::S3::BucketPolicy
     Properties:
       Bucket: !Ref S3ElbLocalAccessLogBucket
@@ -538,7 +548,7 @@ Resources:
             Resource:
               - !Sub "arn:aws:s3:::${S3ElbLocalAccessLogBucket}"
               
-  S3WafLocalAccessLogBucket:
+  S3WafLocalAccessLogBucket:        # S3 Bucket for storing WAF access logs with replication configurations.
     Type: AWS::S3::Bucket
     DependsOn: S3LocalLoggingBucket
     DeletionPolicy: Retain
@@ -570,7 +580,7 @@ Resources:
       VersioningConfiguration:
         Status: Enabled
 
-  S3WafAccessLogBucketPolicy:
+  S3WafAccessLogBucketPolicy:       # Bucket policy for WAF access log bucket.
     Type: AWS::S3::BucketPolicy
     Properties:
       Bucket: !Ref S3WafLocalAccessLogBucket
@@ -603,7 +613,7 @@ Resources:
             Resource:
               - !Sub "arn:aws:s3:::${S3WafLocalAccessLogBucket}"
 
-  S3EmrLocalAccessLogBucket:
+  S3EmrLocalAccessLogBucket:        # S3 Bucket for storing EMR local access logs with replication configurations.
     Type: AWS::S3::Bucket
     DependsOn: S3LocalLoggingBucket
     DeletionPolicy: Retain
@@ -635,7 +645,7 @@ Resources:
       VersioningConfiguration:
         Status: Enabled
 
-  S3EmrAccessLogBucketPolicy:
+  S3EmrAccessLogBucketPolicy:       # Bucket policy for EMR local access log bucket.
     Type: AWS::S3::BucketPolicy
     Properties:
       Bucket: !Ref S3EmrLocalAccessLogBucket
@@ -668,7 +678,7 @@ Resources:
             Resource:
               - !Sub "arn:aws:s3:::${S3EmrLocalAccessLogBucket}"
 
-  S3NfLocalAccessLogBucket:
+  S3NfLocalAccessLogBucket:     # S3 Bucket for storing Network Firewall access logs with replication configurations.
     Type: AWS::S3::Bucket
     DependsOn: S3LocalLoggingBucket
     DeletionPolicy: Retain
@@ -700,7 +710,7 @@ Resources:
       VersioningConfiguration:
         Status: Enabled
 
-  S3NfAccessLogBucketPolicy:
+  S3NfAccessLogBucketPolicy:        # Bucket policy for Network Firewall access log bucket
     Type: AWS::S3::BucketPolicy
     Properties:
       Bucket: !Ref S3NfLocalAccessLogBucket
@@ -733,7 +743,7 @@ Resources:
             Resource:
               - !Sub "arn:aws:s3:::${S3NfLocalAccessLogBucket}"
 
-  S3CloudfrontLocalAccessLogBucket:
+  S3CloudfrontLocalAccessLogBucket:     # S3 Bucket for storing CloudFront local logs with replication configurations.
     Type: AWS::S3::Bucket
     DependsOn: S3LocalLoggingBucket
     DeletionPolicy: Retain
@@ -765,7 +775,7 @@ Resources:
       VersioningConfiguration:
         Status: Enabled
 
-  S3CloudfrontAccessLogBucketPolicy:
+  S3CloudfrontAccessLogBucketPolicy:        # Bucket policy for CloudFront local access log bucket.
     Type: AWS::S3::BucketPolicy
     Properties:
       Bucket: !Ref S3CloudfrontLocalAccessLogBucket
@@ -798,7 +808,7 @@ Resources:
             Resource:
               - !Sub "arn:aws:s3:::${S3CloudfrontLocalAccessLogBucket}"
               
-  S3LocalLoggingBucket:
+  S3LocalLoggingBucket:     # S3 Bucket for storing local logging with replication configuration.
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
     Properties:
@@ -826,7 +836,7 @@ Resources:
       VersioningConfiguration:
         Status: Enabled
         
-  ElasticServerlessForwarderEventMacro:
+  ElasticServerlessForwarderEventMacro:     # Serverless Application for elastic serverless forwarder event macro.
     Type: AWS::Serverless::Application
     Condition: ShouldDeployElasticServerlessForwarder
     Properties:
@@ -838,7 +848,7 @@ Resources:
     Metadata:
       SamResourceId: ElasticServerlessForwarderEventMacro
 
-  ElasticServerlessForwarderApplication:
+  ElasticServerlessForwarderApplication:        # Serverless Application for elastic serverless forwarder application.
     Type: AWS::Serverless::Application
     Condition: ShouldDeployElasticServerlessForwarder
     Properties:
@@ -873,7 +883,7 @@ Resources:
     Metadata:
       SamResourceId: ElasticServerlessForwarderApplication
       
-  S3ConfigFileBucket:       #Bucket to store the config.yaml file
+  S3ConfigFileBucket:       # S3 Bucket for storing the config.yaml file.
     Type: AWS::S3::Bucket
     Condition: ShouldDeployElasticServerlessForwarder
     DeletionPolicy: Retain
@@ -882,7 +892,7 @@ Resources:
       VersioningConfiguration:
         Status: Enabled
 
-  S3ConfigFileBucketPolicy:
+  S3ConfigFileBucketPolicy:     # Bucket policy for S3ConfigFileBucket bucket which stores config.yaml file.
     Type: AWS::S3::BucketPolicy
     Condition: ShouldDeployElasticServerlessForwarder
     DependsOn: S3ConfigFileBucket
@@ -895,7 +905,6 @@ Resources:
             Action:
               - s3:PutObject
               - s3:GetObject
-              - s3:PutObject
               - s3:DeleteObject
               - s3:GetBucketAcl
               - s3:ListBucket
@@ -914,7 +923,7 @@ Resources:
                   - - 'arn:aws:s3:::'
                     - Ref: 'S3ConfigFileBucket'
 
-  ElasticBootstrapLambdaForConfigFile:
+  ElasticBootstrapLambdaForConfigFile:      # Serverless function responsible for configuring the config.yaml file required for the Elastic serverless forwarder application.
     Type: 'AWS::Serverless::Function'
     Condition: ShouldDeployElasticServerlessForwarder
     DependsOn:
@@ -944,7 +953,7 @@ Resources:
             - Fn::Join: [',', !Ref KinesisDataStreamArn]
             - ""  # Set to an empty string if ShouldIngestKinesisDataStream is false
 
-  ElasticBootstrapLambdaExecutionRole:
+  ElasticBootstrapLambdaExecutionRole:      # IAM role for execution of Elastic Bootstrap Lambda function.
     Type: 'AWS::IAM::Role'
     Condition: ShouldDeployElasticServerlessForwarder
     Properties:
@@ -961,7 +970,7 @@ Resources:
       ManagedPolicyArns:
         - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
 
-  RolePolicies: 
+  RolePolicies:     #  IAM policy attached to the Elastic Bootstrap Lambda execution role.
     Type: 'AWS::IAM::Policy'
     Condition: ShouldDeployElasticServerlessForwarder
     Properties: 
@@ -976,7 +985,7 @@ Resources:
       Roles: 
         - Ref: "ElasticBootstrapLambdaExecutionRole"
 
-  TriggersBootstrapLambda:
+  TriggersBootstrapLambda:      # Custom resource to trigger the execution of the Elastic Bootstrap Lambda function.
     Type: 'Custom::RunCode'
     Condition: ShouldDeployElasticServerlessForwarder
     DependsOn: ElasticBootstrapLambdaForConfigFile
@@ -984,7 +993,7 @@ Resources:
     Properties:
       ServiceToken: !GetAtt ElasticBootstrapLambdaForConfigFile.Arn
       
-  ElasticForwarderSecurityGroup:
+  ElasticForwarderSecurityGroup:        # Security group for the Elastic serverless forwarder application.
     Type: AWS::EC2::SecurityGroup
     Condition: ShouldDeployVPCResource
     Properties:
@@ -1005,7 +1014,7 @@ Resources:
           ToPort: 9243
           CidrIp: 0.0.0.0/0
       
-  ServerlessLambdaRolePolicies: 
+  ServerlessLambdaRolePolicies:     # IAM policy attached to the serverless Lambda execution role.
     Type: 'AWS::IAM::Policy'
     Condition: ShouldDeployVPCResource
     Properties: 
@@ -1030,7 +1039,7 @@ Resources:
       Roles: 
         - Ref: "ServerlessLambdaExecutionRole"
               
-  ServerlessLambdaExecutionRole:
+  ServerlessLambdaExecutionRole:        # IAM role for executing the ElasticServerlessBootstrap lambda function.
     Type: 'AWS::IAM::Role'
     Condition: ShouldDeployVPCResource
     Properties:
@@ -1047,7 +1056,7 @@ Resources:
       ManagedPolicyArns:
         - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
         
-  ElasticServerlessBootstrapFunction:
+  ElasticServerlessBootstrapFunction:       # Serverless function for creating VPC endpoints if forwarder is deployed in a VPC.
     Type: AWS::Serverless::Function
     Condition: ShouldDeployVPCResource
     Properties:
@@ -1470,7 +1479,7 @@ Resources:
           INGEST_KINESIS_LOGS: !Ref IngestKinesisLogs
           INGEST_CLOUDWATCH_LOGS: !Ref IngestCloudWatchLogs
     
-  TriggersServerlessBootstrapLambdaFunction:
+  TriggersServerlessBootstrapLambdaFunction:        # Custom resource to trigger the execution of the Elastic Serverless Bootstrap Lambda function.
     Type: 'Custom::RunCode'
     Condition: ShouldDeployVPCResource
     DeletionPolicy: Retain
@@ -1478,7 +1487,7 @@ Resources:
     Properties:
       ServiceToken: !GetAtt ElasticServerlessBootstrapFunction.Arn
       
-  KinesisFireHose:
+  KinesisFireHose:      # AWS Kinesis Firehose Delivery Stream for ingesting logs data.
     Type: AWS::KinesisFirehose::DeliveryStream
     Condition: ShouldIngestLogsViaKinesisFireHose
     DependsOn: KinesisFireHoseBackupBucket
@@ -1491,6 +1500,9 @@ Resources:
           Url: !Ref ElasticEndpointURL
         RequestConfiguration:
           ContentEncoding: GZIP
+          CommonAttributes:
+            - AttributeName: es_datastream_name
+              AttributeValue: !Ref KinesisFireHoseDataStreamTag
         BufferingHints:
           IntervalInSeconds: 60
           SizeInMBs: 1
@@ -1498,17 +1510,17 @@ Resources:
         RetryOptions:
           DurationInSeconds: 300
         CloudWatchLoggingOptions:
-            Enabled: true
-            LogGroupName: !Ref FireHoseLogGroup
-            LogStreamName: !Ref DestinationErrorLogStream
+          Enabled: true
+          LogGroupName: !Ref FireHoseLogGroup
+          LogStreamName: !Ref DestinationErrorLogStream
         S3BackupMode: FailedDataOnly
         S3Configuration:
           BucketARN: !Sub "arn:aws:s3:::${KinesisFireHoseBackupBucket}"
           CompressionFormat: UNCOMPRESSED
           RoleARN: !GetAtt KinesisFireHoseRole.Arn
           
-  KinesisFireHoseRole:
-    Type: 'AWS::IAM::Role'
+  KinesisFireHoseRole:      # IAM Role for Kinesis Firehose Delivery Stream.
+    Type: 'AWS::IAM::Role'      
     Condition: ShouldIngestLogsViaKinesisFireHose
     Properties:
       AssumeRolePolicyDocument: 
@@ -1522,7 +1534,7 @@ Resources:
               - "sts:AssumeRole"
       Path: "/"
 
-  KinesisFireHoseRolePolicies: 
+  KinesisFireHoseRolePolicies:      # IAM Policy for Kinesis Firehose Delivery Stream role, providing permissions to access S3 bucket.
     Type: 'AWS::IAM::Policy'
     Condition: ShouldIngestLogsViaKinesisFireHose
     Properties:
@@ -1544,20 +1556,20 @@ Resources:
       Roles: 
         - Ref: "KinesisFireHoseRole"
         
-  FireHoseLogGroup:
+  FireHoseLogGroup:     # AWS CloudWatch Logs LogGroup for storing logs related to the Kinesis Firehose.
     Type: "AWS::Logs::LogGroup"
     Condition: ShouldIngestLogsViaKinesisFireHose
     Properties:
       RetentionInDays: 1
 
-  DestinationErrorLogStream:
+  DestinationErrorLogStream:        # AWS CloudWatch Logs LogStream for storing destination delivery errors related to the Kinesis Firehose.
     Type: "AWS::Logs::LogStream"
     Condition: ShouldIngestLogsViaKinesisFireHose
     Properties:
       LogGroupName: !Ref FireHoseLogGroup
       LogStreamName: "DestinationDelivery"
       
-  KinesisFireHoseBackupBucket:       #Bucket to store the failed data from Kinesis Firehose
+  KinesisFireHoseBackupBucket:       # S3 Bucket to store the failed data from Kinesis Firehose.
     Type: AWS::S3::Bucket
     Condition: ShouldIngestLogsViaKinesisFireHose
     DeletionPolicy: Retain
@@ -1566,7 +1578,7 @@ Resources:
       VersioningConfiguration:
         Status: Enabled
 
-  KinesisFireHoseBackupBucketPolicy:
+  KinesisFireHoseBackupBucketPolicy:        # S3 Bucket Policy for Kinesis Firehose Backup Bucket, providing permissions for Kinesis Firehose service.
     Type: AWS::S3::BucketPolicy
     DependsOn: KinesisFireHoseBackupBucket
     Condition: ShouldIngestLogsViaKinesisFireHose
@@ -1595,7 +1607,7 @@ Resources:
                   - - 'arn:aws:s3:::'
                     - Ref: 'KinesisFireHoseBackupBucket'
                     
-  ElasticAgentLambdaRolePolicy: 
+  ElasticAgentLambdaRolePolicy:     # IAM Policy for Elastic Agent Lambda Execution Role.
     Type: 'AWS::IAM::Policy'
     Condition: ShouldIngestEC2InstanceLogs
     Properties: 
@@ -1614,7 +1626,7 @@ Resources:
       Roles: 
         - Ref: "ElasticAgentLambdaExecutionRole"
               
-  ElasticAgentLambdaExecutionRole:
+  ElasticAgentLambdaExecutionRole:      # IAM Role for execution of Elastic Agent Lambda function.
     Type: 'AWS::IAM::Role'
     Condition: ShouldIngestEC2InstanceLogs
     Properties:
@@ -1631,7 +1643,7 @@ Resources:
       ManagedPolicyArns:
         - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
         
-  ElasticAgentLambdaFunction:
+  ElasticAgentLambdaFunction:       # Serverless function responsible for deploying cloudformation stack which creates EC2 instance with elastic agent installed.
     Type: AWS::Serverless::Function
     Condition: ShouldIngestEC2InstanceLogs
     Properties:
@@ -1724,7 +1736,7 @@ Resources:
           ElasticSearchDeploymentID: !Ref ElasticSearchDeploymentID
           DeploymentVersion: !Ref DeploymentVersion
           
-  TriggersElasticAgentLambdaFunction:
+  TriggersElasticAgentLambdaFunction:       # Custom resource to trigger the execution of the Elastic Agent Lambda function.
     Type: 'Custom::RunCode'
     Condition: ShouldIngestEC2InstanceLogs
     DeletionPolicy: Retain
