@@ -1,0 +1,2292 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: "This template deploys the S3 logging buckets, AWS SQS queue to trigger the serverless forwarder, Bootstrap Lambda to upload config file, Elastic Serverless Forwarder and the required resources to ingest the logs to Elastic Cloud"
+Parameters:
+    ElasticCloudID:
+      Type: String
+      Description: Cloud ID of Elastic Cluster Deployment
+
+    ElasticAPIKey:
+      Type: String
+      Description: RESTful API to provide access to deployment CRUD actions
+      NoEcho: true
+
+    AWSOrganizationID:
+      Type: String
+      Description: >
+        The ID of your AWS Organization.
+        Example: o-0123456789abcdef0 
+      
+    CloudTrailBucketName:
+      Type: String
+      Description: >
+        Name of the AWS CloudTrail S3 bucket
+        Example: aws-logs-123456789123-us-east-1
+        
+    CloudTrailBucketARN:
+      Type: String
+      Description: >
+        ARN of the AWS CloudTrail S3 bucket
+        Example: arn:aws:s3:::aws-logs-123456789123-us-east-1
+
+    SecurityLakeBucketArn:
+      Type: String
+      Default: ""
+      Description: >
+        ARN of the Security lake S3 bucket
+        Example: arn:aws:s3:::security-lake-logs-123456789123-us-east-1
+
+    SecurityLakeSQSArn:
+      Type: String
+      Default: ""
+      Description: >
+        ARN of the Security lake SQS
+        Example: arn:aws:sqs:us-east-1:123456789012:SecurityLake_us-east-1_MAIN_QUEUE_1_0   
+
+    DeployInVPC:
+      Type: String
+      Description: >
+        'Do you want to deploy the Elastic Serverless Forwarder in a VPC? (Enter "Yes" or "No").
+        Note: If yes, make sure a VPC is already been created in the region before deploying this CFT.' 
+      Default: 'No'
+      AllowedValues: ['Yes', 'No']
+
+    VPCId:
+      Type: String
+      Default: ""
+      Description: 'Enter the VPC ID in which you want to deploy the Elastic Serverless Forwarder. Provide the value only if you want to deploy the Elastic Serverless Forwarder in the VPC'
+
+    SubnetIds:
+      Type: CommaDelimitedList
+      Default: ""
+      Description: 'Enter the Subnet IDs (comma-separated) for the Elastic Serverless Forwarder. Provide the value only if you want to deploy the Elastic Serverless Forwarder in the VPC'
+      ConstraintDescription: 'Please enter a valid list of Subnet IDs.'
+      
+    RouteTableIds:
+      Type: CommaDelimitedList
+      Default: ""
+      Description: 'Specify the IDs of the route tables to be updated for the S3 bucket Gateway VPC Endpoint. Provide values only if deploying the Elastic serverless forwarder in a VPC.'
+      ConstraintDescription: 'Please enter valid Route Table IDs.'
+      
+    IngestKinesisLogs:
+      Type: String
+      Default: "No"
+      AllowedValues:
+      - "Yes"
+      - "No"
+      Description: "Do you want to ingest Kinesis data streams to the Elastic Cloud? (Choose 'Yes' or 'No'). If yes, make sure you have Kinesis data stream already created."
+
+    KinesisDataStreamArn:
+      Type: CommaDelimitedList
+      Default: ""
+      Description: "Comma delimited list of Kinesis Data Stream ARNs (Provide the value only if you want to ingest the Kinesis data streams to the Elastic Cloud)"
+      
+    IngestCloudWatchLogs:
+      Type: String
+      Default: "No"
+      AllowedValues:
+      - "Yes"
+      - "No"
+      Description: "Do you want to ingest CloudWatch Log Group logs to the Elastic Cloud? (Choose 'Yes' or 'No'). If yes, provide log group ARNs."
+
+    CloudWatchLogGroupArns:
+      Type: CommaDelimitedList
+      Default: ""
+      Description: "Comma delimited list of CloudWatch Log Group ARNs (Provide the value only if you want to ingest the CloudWatch Log Group logs to the Elastic Cloud)"
+    
+    EnableKinesisFirehoseIngestion:
+      Type: String
+      Default: "No"
+      AllowedValues:
+        - "Yes"
+        - "No"
+      Description: "Specify whether you want to ingest logs to Elastic Cloud using Amazon Kinesis Firehose Delivery Stream. Choose 'Yes' to enable ingestion via Kinesis Firehose, or 'No' to ingest logs via a different method."
+    
+    ElasticEndpointURL:
+      Type: String
+      Default: ""
+      Description: "Specify the endpoint URL of your Elastic deployment. This is the URL where your Elastic services are hosted. Note: Ensure this value is entered accurately to enable proper integration with your Elastic deployment."
+    
+    KinesisFireHoseDataStreamTag:
+      Type: String
+      Default: ""
+      Description: >
+        Provide a value for the tag to specify data streams for ingesting logs. 
+        Example: logs-aws.vpcflow-default for ingesting VPC flow logs.
+        
+    IngestEC2Logs:
+      Type: String
+      Default: "No"
+      AllowedValues:
+      - "Yes"
+      - "No"
+      Description: "Do you want to ingest EC2 logs to the Elastic Cloud? (Choose 'Yes' or 'No')."
+      
+    KibanaURL:
+      Type: String
+      Default: ''
+      Description: >-
+        If you want to ingest EC2 logs to Elastic Cloud, then provide the Kibana
+        URL in this section.
+    
+    ElasticsearchUsername:
+      Type: String
+      Default: ''
+      Description: "Specify the username for accessing the Elasticsearch deployment."
+      
+    ElasticsearchPassword:
+      Type: String
+      Default: ''
+      Description: "Specify the password for accessing the Elasticsearch deployment."
+      NoEcho: true
+      
+    ElasticSearchDeploymentID:
+      Type: String
+      Default: ''
+      Description: "Specify the unique Deployment ID associated with your Elasticsearch deployment."
+      
+    DeploymentVersion:
+      Type: String
+      Default: ''
+      Description: >-
+        Specify the version of the Elasticsearch deployment.
+        Note: If the version follows the format v8.11.0, please exclude the 'v' and input as 8.11.0 for consistency.
+    
+Conditions:
+  ShouldDeployElasticForwarderInVPC: !Equals [!Ref DeployInVPC, "Yes"]
+  ShouldIncludeSecurityLakeSQSArn: !Not [!Equals [!Ref SecurityLakeSQSArn, ""]]
+  ShouldIncludeSecurityLakeBucketArn: !Not [!Equals [!Ref SecurityLakeBucketArn, ""]]
+  ShouldIngestKinesisDataStream: !Equals [!Ref IngestKinesisLogs, "Yes"]
+  ShouldIngestCloudWatchLogs: !Equals [!Ref IngestCloudWatchLogs, "Yes"]
+  ShouldIngestLogsViaKinesisFireHose: !Equals [!Ref EnableKinesisFirehoseIngestion, "Yes"]
+  ShouldIngestEC2InstanceLogs: !Equals [!Ref IngestEC2Logs, "Yes"]
+  
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: AWS Organization ID
+      Parameters:
+      - AWSOrganizationID
+    - Label:
+        default: S3 CloudTrail bucket details of Log Archive Account 
+      Parameters:
+      - CloudTrailBucketName
+      - CloudTrailBucketARN
+    - Label:
+        default: Security Lake Bucket and SQS ARN 
+      Parameters:
+      - SecurityLakeBucketArn
+      - SecurityLakeSQSArn
+    - Label:
+        default: Elastic Cluster Deployment Details
+      Parameters:
+      - ElasticCloudID
+      - ElasticAPIKey
+    - Label:
+        default: Ingest kinesis data stream (Optional)
+      Parameters:
+      - IngestKinesisLogs
+      - KinesisDataStreamArn
+    - Label:
+        default: Ingest CloudWatch LogGroup Logs (Optional)
+      Parameters:
+      - IngestCloudWatchLogs
+      - CloudWatchLogGroupArns
+    - Label:
+        default: Deploy Elastic Forwarder in a VPC (Optional)
+      Parameters:
+      - DeployInVPC
+      - VPCId
+      - SubnetIds
+      - RouteTableIds
+    - Label:
+        default: Ingest Logs Via AWS KinesisFireHose delivery stream (Optional)
+      Parameters:
+      - EnableKinesisFirehoseIngestion
+      - ElasticEndpointURL
+      - KinesisFireHoseDataStreamTag
+    - Label:
+        default: Ingest EC2 Instance Logs (Optional)
+      Parameters:
+      - IngestEC2Logs
+      - KibanaURL
+      - ElasticsearchUsername
+      - ElasticsearchPassword
+      - ElasticSearchDeploymentID
+      - DeploymentVersion
+    ParameterLabels:
+      ElasticCloudID:
+        default: Elastic Cloud ID
+      ElasticAPIKey:
+        default: Elastic API Key
+      AWSOrganizationID:
+        default: AWS Organization ID
+      CloudTrailBucketName:
+        default: CloudTrail Bucket Name
+      CloudTrailBucketARN:
+        default: CloudTrail Bucket ARN
+      SecurityLakeBucketArn:
+        default: Security Lake Bucket ARN
+      SecurityLakeSQSArn:
+        default: Security Lake SQS ARN
+      DeployInVPC:
+        default: Deploy Serverless Forwarder In VPC
+      VPCId:
+        default: VPC ID
+      SubnetIds:
+        default: Subnet IDs
+      RouteTableIds:
+        Default: Route Table IDs
+      IngestKinesisLogs:
+        default: Ingest Kinesis Logs
+      KinesisDataStreamArn:
+        default: Kinesis Data Stream ARN
+      IngestCloudWatchLogs:
+        default: Ingest CloudWatch Logs
+      CloudWatchLogGroupArns:
+        default: CloudWatch LogGroup ARNs
+      EnableKinesisFirehoseIngestion:
+        default: Enable Kinesis Firehose Ingestion
+      KinesisFireHoseDataStreamTag:
+        default: Kinesis FireHose DataStream Tag
+      ElasticEndpointURL:
+        Default: Elasticsearch Endpoint URL
+      IngestEC2Logs:
+        default: Ingest EC2 Logs
+      KibanaURL:
+        Default: Kibana URL
+      ElasticsearchUsername:
+        Default: Elasticsearch Username
+      ElasticsearchPassword:
+        Default: Elasticsearch Password
+      ElasticSearchDeploymentID:
+        Default: ElasticSearch DeploymentID
+      DeploymentVersion:
+        Default: Deployment Version
+  
+Mappings:
+  VPCServiceName:
+    af-south-1: 
+      service: com.amazonaws.vpce.us-east-1.vpce-svc-0e42e1e06ed010238
+    ap-east-1:
+      service: com.amazonaws.vpce.ap-east-1.vpce-svc-0f96fbfaf55558d5c
+    ap-northeast-1:
+      service: com.amazonaws.vpce.ap-northeast-1.vpce-svc-0e1046d7b48d5cf5f
+    ap-northeast-2:
+      service: com.amazonaws.vpce.ap-northeast-2.vpce-svc-0d90cf62dae682b84
+    ap-south-1:
+      service: com.amazonaws.vpce.ap-south-1.vpce-svc-0e9c1ae5caa269d1b
+    ap-southeast-1:
+      service: com.amazonaws.vpce.ap-southeast-1.vpce-svc-0cbc6cb9bdb683a95
+    ap-southeast-2:
+      service: com.amazonaws.vpce.ap-southeast-2.vpce-svc-0cde7432c1436ef13
+    ca-central-1:
+      service: com.amazonaws.vpce.ca-central-1.vpce-svc-0d3e69dd6dd336c28
+    eu-central-1:
+      service: com.amazonaws.vpce.eu-central-1.vpce-svc-081b2960e915a0861
+    eu-south-1:
+      service: com.amazonaws.vpce.eu-south-1.vpce-svc-03d8fc8a66a755237
+    eu-north-1:
+      service: com.amazonaws.vpce.eu-north-1.vpce-svc-05915fc851f802294
+    eu-west-1:
+      service: com.amazonaws.vpce.eu-west-1.vpce-svc-01f2afe87944eb12b
+    eu-west-2:
+      service: com.amazonaws.vpce.eu-west-2.vpce-svc-0e42a2c194c97a1d0
+    eu-west-3:
+      service: com.amazonaws.vpce.eu-west-3.vpce-svc-0d6912d10db9693d1
+    me-south-1:
+      service: com.amazonaws.vpce.me-south-1.vpce-svc-0381de3eb670dcb48
+    sa-east-1:
+      service: com.amazonaws.vpce.sa-east-1.vpce-svc-0b2dbce7e04dae763
+    us-east-1: 
+      service: com.amazonaws.vpce.us-east-1.vpce-svc-0e42e1e06ed010238
+    us-east-2:
+      service: com.amazonaws.vpce.us-east-2.vpce-svc-02d187d2849ffb478
+    us-west-1:
+      service: com.amazonaws.vpce.us-west-1.vpce-svc-00def4a16a26cb1b4
+    us-west-2:
+      service: com.amazonaws.vpce.us-west-2.vpce-svc-0e69febae1fb91870
+      
+  PrivateHostedZoneDNSName:
+    af-south-1:
+      HostedZone: af-south-1.aws.found.io
+    ap-east-1:
+      HostedZone: ap-east-1.aws.found.io
+    ap-northeast-1:
+      HostedZone: ap-northeast-1.aws.found.io
+    ap-northeast-2:
+      HostedZone: ap-northeast-2.aws.found.io
+    ap-south-1:
+      HostedZone: ap-south-1.aws.found.io
+    ap-southeast-1:
+      HostedZone: ap-southeast-1.aws.found.io
+    ap-southeast-2:
+      HostedZone: ap-southeast-2.aws.found.io
+    ca-central-1:
+      HostedZone: ca-central-1.aws.found.io
+    eu-central-1:
+      HostedZone: eu-central-1.aws.found.io
+    eu-south-1:
+      HostedZone: eu-south-1.aws.found.io
+    eu-north-1:
+      HostedZone: eu-north-1.aws.found.io
+    eu-west-1:
+      HostedZone: eu-west-1.aws.found.io
+    eu-west-2:
+      HostedZone: eu-west-2.aws.found.io
+    eu-west-3:
+      HostedZone: eu-west-3.aws.found.io
+    me-south-1:
+      HostedZone: me-south-1.aws.found.io
+    sa-east-1:
+      HostedZone: sa-east-1.aws.found.io
+    us-east-1: 
+      HostedZone: us-east-1.aws.found.io
+    us-east-2:
+      HostedZone: us-east-2.aws.found.io
+    us-west-1:
+      HostedZone: us-west-1.aws.found.io
+    us-west-2:
+      HostedZone: us-west-2.aws.found.io
+
+  AMIID:
+    af-south-1: 
+      ami: ami-05759acc7d8973892
+    ap-east-1:
+      ami: ami-03490b1b7425e5fe3
+    ap-northeast-1:
+      ami: ami-09a81b370b76de6a2
+    ap-northeast-2:
+      ami: ami-086cae3329a3f7d75
+    ap-south-1:
+      ami: ami-0287a05f0ef0e9d9a
+    ap-southeast-1:
+      ami: ami-078c1149d8ad719a7
+    ap-southeast-2:
+      ami: ami-0df4b2961410d4cff
+    ca-central-1:
+      ami: ami-06873c81b882339ac
+    eu-central-1:
+      ami: ami-06dd92ecc74fdfb36
+    eu-south-1:
+      ami: ami-0b03947fd0ce0eed2
+    eu-north-1:
+      ami: ami-0fe8bec493a81c7da
+    eu-west-1:
+      ami: ami-0694d931cee176e7d
+    eu-west-2:
+      ami: ami-0505148b3591e4c07
+    eu-west-3:
+      ami: ami-00983e8a26e4c9bd9
+    me-south-1: 
+      ami: ami-0f8d2a6080634ee69
+    sa-east-1: 
+      ami: ami-0b6c2d49148000cd5
+    us-east-1: 
+      ami: ami-0fc5d935ebf8bc3bc
+    us-east-2:
+      ami: ami-0e83be366243f524a
+    us-west-1: 
+      ami: ami-0cbd40f694b804622
+    us-west-2:
+      ami: ami-0efcece6bed30fd98
+      
+      
+Resources:
+  ElasticSecret:
+    Type: AWS::SecretsManager::Secret       # AWS Secrets Manager Secret for storing Elastic Cloud & API key credentials. 
+    DependsOn: ElasticSSMSecretEncryptionKey
+    Properties:
+      Name: !Sub "ElasticCloudSecret-${AWS::StackName}"
+      KmsKeyId: !Ref ElasticSSMSecretEncryptionKey
+      SecretString: !Sub |
+        {
+          "ElasticCloudID": "${ElasticCloudID}",
+          "APIKey": "${ElasticAPIKey}"
+        }
+        
+  ElasticCloudTrailSQS:       # SQS queue for centralized CloudTrail logs
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: Elastic-SQS-CloudTrail-Config
+      VisibilityTimeout: 910
+      KmsMasterKeyId: !Ref ElasticSQSKMSKey
+      KmsDataKeyReusePeriodSeconds: 1800
+      
+  ElasticCloudTrailSQSPolicy:     # Access policy for the CloudTrail SQS queue. 
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref ElasticCloudTrailSQS
+      PolicyDocument:
+        Version: 2012-10-17
+        Id: s3-forwarding
+        Statement:
+          - Sid: S3 forwarding
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Action: 
+              - 'sqs:SendMessage'
+            Resource: !GetAtt ElasticCloudTrailSQS.Arn
+            Condition:
+              ArnLike:
+                aws:SourceArn: 
+                  - !Ref CloudTrailBucketARN
+                  
+  ElbSQS:       # SQS queue for centralized Elastic Load Balancer logs
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: Elastic-SQS-ElbLogs
+      VisibilityTimeout: 910
+      KmsMasterKeyId: !Ref ElasticSQSKMSKey
+      KmsDataKeyReusePeriodSeconds: 1800
+      
+  ElbSQSPolicy:     # Access policy for the Elastic Load Balancer SQS queue.
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref ElbSQS
+      PolicyDocument:
+        Version: 2012-10-17
+        Id: s3-forwarding
+        Statement:
+          - Sid: S3 forwarding
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Action: 
+              - 'sqs:SendMessage'
+            Resource: !GetAtt ElbSQS.Arn
+            Condition:
+              ArnLike:
+                aws:SourceArn: 
+                  - !Sub "arn:aws:s3:::elastic-central-elb-access-logs-${AWS::AccountId}-${AWS::Region}"
+                  
+  ElasticS3SQS:        # SQS queue for centralized S3 access logs.
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: Elastic-SQS-S3Logs
+      VisibilityTimeout: 910
+      KmsMasterKeyId: !Ref ElasticSQSKMSKey
+      KmsDataKeyReusePeriodSeconds: 1800
+  
+  ElasticS3SQSPolicy:      # Access policy for the S3 access logs SQS queue.
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref ElasticS3SQS
+      PolicyDocument:
+        Version: 2012-10-17
+        Id: s3-forwarding
+        Statement:
+          - Sid: S3 forwarding
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Action: 
+              - 'sqs:SendMessage'
+            Resource: !GetAtt ElasticS3SQS.Arn
+            Condition:
+              ArnLike:
+                aws:SourceArn: 
+                  - !Sub "arn:aws:s3:::elastic-central-s3-access-logs-${AWS::AccountId}-${AWS::Region}"
+                  
+  VPCFlowLogsElasticSQS:        # SQS queue for centralized VPC flow logs.
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: Elastic-SQS-VPCFlowLogs
+      VisibilityTimeout: 910
+      KmsMasterKeyId: !Ref ElasticSQSKMSKey
+      KmsDataKeyReusePeriodSeconds: 1800
+
+  VPCFlowLogsElasticSQSPolicy:      # Access policy for the VPC flow logs SQS queue.
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref VPCFlowLogsElasticSQS
+      PolicyDocument:
+        Version: 2012-10-17
+        Id: VPCFlowLogs-forwarding
+        Statement:
+          - Sid: VPCFlowLogs forwarding
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Action: 
+              - 'sqs:SendMessage'
+            Resource: !GetAtt VPCFlowLogsElasticSQS.Arn
+            Condition:
+              ArnLike:
+                aws:SourceArn: 
+                  - !Sub "arn:aws:s3:::elastic-central-vpcflow-logging-${AWS::AccountId}-${AWS::Region}"
+                  
+  ElasticWafSQS:        # SQS queue for centralized WAF logs.
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: "Elastic-SQS-WafLogs"
+      VisibilityTimeout: 910
+      KmsMasterKeyId:
+        Ref: "ElasticSQSKMSKey"
+      KmsDataKeyReusePeriodSeconds: 1800
+  
+  ElasticWafSQSPolicy:      # Access policy for the WAF SQS queue.
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - Ref: "ElasticWafSQS"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Id: "s3-forwarding"
+        Statement:
+          - Sid: "S3 forwarding"
+            Effect: "Allow"
+            Principal:
+              AWS: "*"
+            Action:
+              - "sqs:SendMessage"
+            Resource:
+              Fn::GetAtt: "ElasticWafSQS.Arn"
+            Condition:
+              ArnLike:
+                aws:SourceArn:
+                  - Fn::Sub: "arn:aws:s3:::elastic-central-waf-access-logs-${AWS::AccountId}-${AWS::Region}"
+                  
+  EmrSQS:       # SQS queue for centralized EMR logs
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: Elastic-SQS-EmrLogs
+      VisibilityTimeout: 910
+      KmsMasterKeyId: !Ref ElasticSQSKMSKey
+      KmsDataKeyReusePeriodSeconds: 1800
+      
+  EmrSQSPolicy:     # Access policy for the EMR SQS queue.
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref EmrSQS
+      PolicyDocument:
+        Version: 2012-10-17
+        Id: s3-forwarding
+        Statement:
+          - Sid: S3 forwarding
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Action: 
+              - 'sqs:SendMessage'
+            Resource: !GetAtt EmrSQS.Arn
+            Condition:
+              ArnLike:
+                aws:SourceArn: 
+                  - !Sub "arn:aws:s3:::elastic-central-emr-access-logs-${AWS::AccountId}-${AWS::Region}"
+                  
+  NfSQS:       # SQS queue for centralized Network Firewall logs.
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: Elastic-SQS-NFLogs
+      VisibilityTimeout: 910
+      KmsMasterKeyId: !Ref ElasticSQSKMSKey
+      KmsDataKeyReusePeriodSeconds: 1800
+
+  NfSQSPolicy:     # Access policy for the Network Firewall SQS queue.
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref NfSQS
+      PolicyDocument:
+        Version: 2012-10-17
+        Id: s3-forwarding
+        Statement:
+          - Sid: S3 forwarding
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Action: 
+              - 'sqs:SendMessage'
+            Resource: !GetAtt NfSQS.Arn
+            Condition:
+              ArnLike:
+                aws:SourceArn: 
+                  - !Sub "arn:aws:s3:::elastic-central-nf-access-logs-${AWS::AccountId}-${AWS::Region}"
+                  
+  ElasticCloudfrontSQS:       # SQS queue for centralized CloudFront logs.
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: Elastic-SQS-Cloudfront-Config
+      VisibilityTimeout: 910
+      KmsMasterKeyId: !Ref ElasticSQSKMSKey
+      KmsDataKeyReusePeriodSeconds: 1800
+  
+  ElasticCloudfrontSQSPolicy:     # Access policy for the CloudFront SQS queue.
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref ElasticCloudfrontSQS
+      PolicyDocument:
+        Version: 2012-10-17
+        Id: s3-forwarding
+        Statement:
+          - Sid: S3 forwarding
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Action: 
+              - 'sqs:SendMessage'
+            Resource: !GetAtt ElasticCloudfrontSQS.Arn
+            Condition:
+              ArnLike:
+                aws:SourceArn: 
+                  - !Sub "arn:aws:s3:::elastic-central-cloudfront-access-logs-${AWS::AccountId}-${AWS::Region}"
+                  
+  S3AccessLoggingBucket:        # S3 bucket for centralized S3 access logs
+    DependsOn: ElasticS3SQSPolicy
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub elastic-central-s3-access-logs-${AWS::AccountId}-${AWS::Region}
+      VersioningConfiguration:
+        Status: Enabled
+      NotificationConfiguration:
+        QueueConfigurations:
+          - Event: s3:ObjectCreated:*
+            Queue: !GetAtt ElasticS3SQS.Arn
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+              
+  S3AccessLoggingBucketPolicy:      # Bucket policy for the S3 access logging bucket.
+    Type: AWS::S3::BucketPolicy
+    DependsOn: S3AccessLoggingBucket
+    Properties:
+      Bucket: !Ref S3AccessLoggingBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: Replication
+            Effect: Allow
+            Principal:
+              AWS: "*"
+            Action:
+              - s3:ListBucket
+              - s3:GetObject
+              - s3:PutBucketVersioning
+              - s3:GetBucketVersioning
+              - s3:ObjectOwnerOverrideToBucketOwner
+              - s3:GetBucketAcl
+              - s3:PutObject
+            Resource:
+              - !Sub "arn:aws:s3:::${S3AccessLoggingBucket}/*"
+              - !Sub "arn:aws:s3:::${S3AccessLoggingBucket}"
+            Condition:
+              StringEquals:
+                aws:PrincipalOrgID:
+                  - !Ref AWSOrganizationID
+                  
+  VPCFlowLoggingBucket:     # S3 bucket for centralized VPC flow logs
+    Type: AWS::S3::Bucket
+    DependsOn: S3AccessLoggingBucket
+    Properties:
+      BucketName: !Sub elastic-central-vpcflow-logging-${AWS::AccountId}-${AWS::Region}
+      VersioningConfiguration:
+        Status: Enabled
+      NotificationConfiguration:
+        QueueConfigurations:
+          - Event: s3:ObjectCreated:*
+            Queue: !GetAtt VPCFlowLogsElasticSQS.Arn
+      LoggingConfiguration:
+        DestinationBucketName: !Sub elastic-central-s3-access-logs-${AWS::AccountId}-${AWS::Region}
+        LogFilePrefix: !Sub "elastic-central-s3-access-logs-${AWS::AccountId}-${AWS::Region}/"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - ExpirationInDays: 90
+            Status: Enabled
+
+  VPCFlowLogsBucketPolicy:      # Bucket policy for the VPC flow logging bucket.
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref VPCFlowLoggingBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: bucketpolicy
+            Effect: Allow
+            Principal:
+              AWS: "*"
+            Action:
+              - s3:ListBucket
+              - s3:GetObject
+              - s3:PutBucketVersioning
+              - s3:GetBucketVersioning
+              - s3:ObjectOwnerOverrideToBucketOwner
+              - s3:GetBucketAcl
+              - s3:PutObject
+            Resource:
+              - !Sub "arn:aws:s3:::${VPCFlowLoggingBucket}/*"
+              - !Sub "arn:aws:s3:::${VPCFlowLoggingBucket}"
+            Condition:
+              StringEquals:
+                aws:PrincipalOrgID:
+                  - !Ref AWSOrganizationID
+                  
+  ElbCentralLoggingBucket:      # S3 bucket for centralized ELB access logs
+    DependsOn: 
+      - ElbSQSPolicy
+      - S3AccessLoggingBucket
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub elastic-central-elb-access-logs-${AWS::AccountId}-${AWS::Region}
+      VersioningConfiguration:
+        Status: Enabled
+      NotificationConfiguration:
+        QueueConfigurations:
+          - Event: s3:ObjectCreated:*
+            Queue: !GetAtt ElbSQS.Arn
+      LoggingConfiguration:
+        DestinationBucketName: !Sub elastic-central-s3-access-logs-${AWS::AccountId}-${AWS::Region}
+        LogFilePrefix: !Sub "elastic-central-s3-access-logs-${AWS::AccountId}-${AWS::Region}/"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - ExpirationInDays: 90
+            Status: Enabled
+            
+  ElbBucketPolicy:      # Bucket policy for the ELB central logging bucket.
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ElbCentralLoggingBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: Replication
+            Effect: Allow
+            Principal:
+              AWS: "*"
+            Action:
+              - s3:ListBucket
+              - s3:GetObject
+              - s3:PutBucketVersioning
+              - s3:GetBucketVersioning
+              - s3:ObjectOwnerOverrideToBucketOwner
+              - s3:GetBucketAcl
+              - s3:PutObject
+            Resource:
+              - !Sub "arn:aws:s3:::${ElbCentralLoggingBucket}/*"
+              - !Sub "arn:aws:s3:::${ElbCentralLoggingBucket}"
+            Condition:
+              StringEquals:
+                aws:PrincipalOrgID:
+                  - !Ref AWSOrganizationID
+          - Sid: AWSBucketPermissionsCheck
+            Action: s3:PutObject
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${AWS::AccountId}:root"
+                - "arn:aws:iam::127311923021:root"
+            Resource:
+              - !Sub "arn:aws:s3:::${ElbCentralLoggingBucket}/*"
+          - Sid: LogDelivery
+            Action: s3:PutObject
+            Effect: Allow
+            Principal:
+              Service: logdelivery.elasticloadbalancing.amazonaws.com
+            Resource:
+              - !Sub "arn:aws:s3:::${ElbCentralLoggingBucket}/*"
+            Condition:
+              StringEquals:
+                "s3:x-amz-acl": "bucket-owner-full-control"
+          - Sid: LogDeliveryPermissionCheck
+            Action: s3:GetBucketAcl
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Resource:
+              - !Sub "arn:aws:s3:::${ElbCentralLoggingBucket}"
+
+  WafCentralLoggingBucket:      # S3 bucket for centralized WAF access logs
+    DependsOn:
+      - "S3AccessLoggingBucket"
+      - "ElasticWafSQSPolicy"
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        Fn::Sub: "elastic-central-waf-access-logs-${AWS::AccountId}-${AWS::Region}"
+      VersioningConfiguration:
+        Status: "Enabled"
+      NotificationConfiguration:
+        QueueConfigurations:
+          - Event: "s3:ObjectCreated:*"
+            Queue:
+              Fn::GetAtt: "ElasticWafSQS.Arn"
+      LoggingConfiguration:
+        DestinationBucketName:
+          Fn::Sub: "elastic-central-s3-access-logs-${AWS::AccountId}-${AWS::Region}"
+        LogFilePrefix:
+          Fn::Sub: "elastic-central-s3-access-logs-${AWS::AccountId}-${AWS::Region}/"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: "AES256"
+      LifecycleConfiguration:
+        Rules:
+          - ExpirationInDays: 90
+            Status: "Enabled"
+
+  WafBucketPolicy:      # Bucket policy for the WAF central logging bucket.
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: "WafCentralLoggingBucket"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: "Replication"
+            Effect: "Allow"
+            Principal:
+              AWS: "*"
+            Action:
+              - "s3:ListBucket"
+              - "s3:GetObject"
+              - "s3:PutBucketVersioning"
+              - "s3:GetBucketVersioning"
+              - "s3:ObjectOwnerOverrideToBucketOwner"
+              - "s3:GetBucketAcl"
+              - "s3:PutObject"
+            Resource:
+              - Fn::Sub: "arn:aws:s3:::${WafCentralLoggingBucket}/*"
+              - Fn::Sub: "arn:aws:s3:::${WafCentralLoggingBucket}"
+            Condition:
+              StringEquals:
+                aws:PrincipalOrgID:
+                  - !Ref AWSOrganizationID
+          - Sid: AWSBucketPermissionsCheck
+            Action: s3:PutObject
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Resource:
+              - !Sub "arn:aws:s3:::${WafCentralLoggingBucket}/*"
+          - Sid: LogDelivery
+            Action: s3:PutObject
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Resource:
+              - !Sub "arn:aws:s3:::${WafCentralLoggingBucket}/*"
+            Condition:
+              StringEquals:
+                "s3:x-amz-acl": "bucket-owner-full-control"
+          - Sid: LogDeliveryPermissionCheck
+            Action: s3:GetBucketAcl
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Resource:
+              - !Sub "arn:aws:s3:::${WafCentralLoggingBucket}"
+              
+  EmrCentralLoggingBucket:      #  S3 bucket for centralized EMR logs
+    DependsOn: 
+      - EmrSQSPolicy
+      - S3AccessLoggingBucket
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub elastic-central-emr-access-logs-${AWS::AccountId}-${AWS::Region}
+      VersioningConfiguration:
+        Status: Enabled
+      NotificationConfiguration:
+        QueueConfigurations:
+          - Event: s3:ObjectCreated:*
+            Queue: !GetAtt EmrSQS.Arn
+      LoggingConfiguration:
+        DestinationBucketName: !Sub elastic-central-s3-access-logs-${AWS::AccountId}-${AWS::Region}
+        LogFilePrefix: !Sub "elastic-central-s3-access-logs-${AWS::AccountId}-${AWS::Region}/"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - ExpirationInDays: 90
+            Status: Enabled
+
+  EmrBucketPolicy:      #  Bucket policy for the EMR central logging bucket.
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref EmrCentralLoggingBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: Replication
+            Effect: Allow
+            Principal:
+              AWS: "*"
+            Action:
+              - s3:ListBucket
+              - s3:GetObject
+              - s3:PutBucketVersioning
+              - s3:GetBucketVersioning
+              - s3:ObjectOwnerOverrideToBucketOwner
+              - s3:GetBucketAcl
+              - s3:PutObject
+            Resource:
+              - !Sub "arn:aws:s3:::${EmrCentralLoggingBucket}/*"
+              - !Sub "arn:aws:s3:::${EmrCentralLoggingBucket}"
+            Condition:
+              StringEquals:
+                aws:PrincipalOrgID:
+                  - !Ref AWSOrganizationID
+          - Sid: AWSBucketPermissionsCheck
+            Action: s3:PutObject
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Resource:
+              - !Sub "arn:aws:s3:::${EmrCentralLoggingBucket}/*"
+          - Sid: LogDelivery
+            Action: s3:PutObject
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Resource:
+              - !Sub "arn:aws:s3:::${EmrCentralLoggingBucket}/*"
+            Condition:
+              StringEquals:
+                "s3:x-amz-acl": "bucket-owner-full-control"
+          - Sid: LogDeliveryPermissionCheck
+            Action: s3:GetBucketAcl
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Resource:
+              - !Sub "arn:aws:s3:::${EmrCentralLoggingBucket}"
+              
+  NfCentralLoggingBucket:       # S3 bucket for centralized Network Firewall logs
+    DependsOn: 
+      - NfSQSPolicy
+      - S3AccessLoggingBucket
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub elastic-central-nf-access-logs-${AWS::AccountId}-${AWS::Region}
+      VersioningConfiguration:
+        Status: Enabled
+      NotificationConfiguration:
+        QueueConfigurations:
+          - Event: s3:ObjectCreated:*
+            Queue: !GetAtt NfSQS.Arn
+      LoggingConfiguration:
+        DestinationBucketName: !Sub elastic-central-s3-access-logs-${AWS::AccountId}-${AWS::Region}
+        LogFilePrefix: !Sub "elastic-central-s3-access-logs-${AWS::AccountId}-${AWS::Region}/"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - ExpirationInDays: 90
+            Status: Enabled
+
+  NfBucketPolicy:       # Bucket policy for the Network Firewall central logging bucket.
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref NfCentralLoggingBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: Replication
+            Effect: Allow
+            Principal:
+              AWS: "*"
+            Action:
+              - s3:ListBucket
+              - s3:GetObject
+              - s3:PutBucketVersioning
+              - s3:GetBucketVersioning
+              - s3:ObjectOwnerOverrideToBucketOwner
+              - s3:GetBucketAcl
+              - s3:PutObject
+            Resource:
+              - !Sub "arn:aws:s3:::${NfCentralLoggingBucket}/*"
+              - !Sub "arn:aws:s3:::${NfCentralLoggingBucket}"
+            Condition:
+              StringEquals:
+                aws:PrincipalOrgID:
+                  - !Ref AWSOrganizationID
+          - Sid: AWSBucketPermissionsCheck
+            Action: s3:PutObject
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Resource:
+              - !Sub "arn:aws:s3:::${NfCentralLoggingBucket}/*"
+          - Sid: LogDelivery
+            Action: s3:PutObject
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Resource:
+              - !Sub "arn:aws:s3:::${NfCentralLoggingBucket}/*"
+            Condition:
+              StringEquals:
+                "s3:x-amz-acl": "bucket-owner-full-control"
+          - Sid: LogDeliveryPermissionCheck
+            Action: s3:GetBucketAcl
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Resource:
+              - !Sub "arn:aws:s3:::${NfCentralLoggingBucket}"
+              
+  CloudfrontLoggingBucket:        # S3 bucket for centralized CloudFront logs
+    DependsOn: 
+      - ElasticCloudfrontSQSPolicy
+      - S3AccessLoggingBucket
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub elastic-central-cloudfront-access-logs-${AWS::AccountId}-${AWS::Region}
+      VersioningConfiguration:
+        Status: Enabled
+      NotificationConfiguration:
+        QueueConfigurations:
+          - Event: s3:ObjectCreated:*
+            Queue: !GetAtt ElasticCloudfrontSQS.Arn
+      LoggingConfiguration:
+        DestinationBucketName: !Sub elastic-central-s3-access-logs-${AWS::AccountId}-${AWS::Region}
+        LogFilePrefix: !Sub "elastic-central-s3-access-logs-${AWS::AccountId}-${AWS::Region}/"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - ExpirationInDays: 90
+            Status: Enabled
+              
+  CloudfrontLoggingBucketPolicy:        # Bucket policy for the CloudFront logging bucket.
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CloudfrontLoggingBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: Replication
+            Effect: Allow
+            Principal:
+              AWS: "*"
+            Action:
+              - s3:ListBucket
+              - s3:GetObject
+              - s3:PutBucketVersioning
+              - s3:GetBucketVersioning
+              - s3:ObjectOwnerOverrideToBucketOwner
+              - s3:GetBucketAcl
+              - s3:PutObject
+            Resource:
+              - !Sub "arn:aws:s3:::${CloudfrontLoggingBucket}/*"
+              - !Sub "arn:aws:s3:::${CloudfrontLoggingBucket}"
+            Condition:
+              StringEquals:
+                aws:PrincipalOrgID:
+                  - !Ref AWSOrganizationID
+          - Sid: AWSBucketPermissionsCheck
+            Action: s3:PutObject
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Resource:
+              - !Sub "arn:aws:s3:::${CloudfrontLoggingBucket}/*"
+          - Sid: LogDelivery
+            Action: s3:PutObject
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Resource:
+              - !Sub "arn:aws:s3:::${CloudfrontLoggingBucket}/*"
+            Condition:
+              StringEquals:
+                "s3:x-amz-acl": "bucket-owner-full-control"
+          - Sid: LogDeliveryPermissionCheck
+            Action: s3:GetBucketAcl
+            Effect: Allow
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Resource:
+              - !Sub "arn:aws:s3:::${CloudfrontLoggingBucket}"
+              
+  ElasticGuardDutySQS:      # SQS queue for Elastic GuardDuty.
+    Type: 'AWS::SQS::Queue'
+    Properties:
+      QueueName: Elastic-SQS-GuardDuty-Config
+      VisibilityTimeout: 910
+      KmsMasterKeyId: !Ref ElasticSQSKMSKey
+      KmsDataKeyReusePeriodSeconds: 1800
+      
+  ElasticGuardDutySQSPolicy:        # Queue policy for Elastic GuardDuty SQS.
+    Type: 'AWS::SQS::QueuePolicy'
+    Properties:
+      Queues:
+        - !Ref ElasticGuardDutySQS
+      PolicyDocument:
+        Version: 2012-10-17
+        Id: s3-forwarding
+        Statement:
+          - Sid: S3 forwarding
+            Effect: Allow
+            Principal:
+              Service: 's3.amazonaws.com'
+            Action:
+              - 'sqs:SendMessage'
+            Resource: !GetAtt 
+              - ElasticGuardDutySQS
+              - Arn
+            Condition:
+              ArnLike:
+                'aws:SourceArn':
+                  - !Sub >-
+                    arn:aws:s3:::elastic-central-guardduty-access-logs-${AWS::AccountId}-${AWS::Region}
+                    
+  GuardDutyArchiveLoggingBucket:        #  S3 bucket for centralized GuardDuty logs collection.
+    DependsOn: ElasticGuardDutySQSPolicy
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Sub 'elastic-central-guardduty-access-logs-${AWS::AccountId}-${AWS::Region}'
+      VersioningConfiguration:
+        Status: Enabled
+      NotificationConfiguration:
+        QueueConfigurations:
+          - Event: 's3:ObjectCreated:*'
+            Queue: !GetAtt 
+              - ElasticGuardDutySQS
+              - Arn
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+              
+  GuardDutyLoggingBucketPolicy:     #  Bucket policy for GuardDuty logging bucket.
+    Type: 'AWS::S3::BucketPolicy'
+    DependsOn: GuardDutyArchiveLoggingBucket
+    Properties:
+      Bucket: !Ref GuardDutyArchiveLoggingBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: AllowGuardDutygetBucketLocation
+            Effect: Allow
+            Principal:
+              Service: guardduty.amazonaws.com
+            Action:
+              - 's3:PutObject'
+              - 's3:GetBucketLocation'
+            Resource:
+              - !Sub 'arn:aws:s3:::${GuardDutyArchiveLoggingBucket}/*'
+              - !Sub 'arn:aws:s3:::${GuardDutyArchiveLoggingBucket}'
+          - Sid: DenyUnencryptedUploads
+            Effect: Deny
+            Principal:
+              Service: guardduty.amazonaws.com
+            Action: 's3:PutObject'
+            Resource:
+              - !Sub 'arn:aws:s3:::${GuardDutyArchiveLoggingBucket}/*'
+            Condition:
+              StringNotEquals:
+                's3:x-amz-server-side-encryption': 'aws:kms'
+              
+  ElasticServerlessForwarderEventMacro:     # Serverless Application for elastic serverless forwarder event macro.
+    Type: AWS::Serverless::Application
+    Properties:
+      Location:
+        ApplicationId: arn:aws:serverlessrepo:eu-central-1:267093732750:applications/helper-macro-elastic-serverless-forwarder
+        SemanticVersion: 1.9.0
+    DependsOn:
+    - TriggersElasticBootstrapLambdaFunction
+    Metadata:
+      SamResourceId: ElasticServerlessForwarderEventMacro
+      
+  ElasticServerlessForwarderApplication:        # Serverless Application for elastic serverless forwarder application.
+    Type: AWS::Serverless::Application
+    Properties:
+      Location:
+        ApplicationId: arn:aws:serverlessrepo:eu-central-1:267093732750:applications/helper-application-elastic-serverless-forwarder
+        SemanticVersion: 1.9.0
+      Parameters:
+        ElasticServerlessForwarderS3ConfigFile: !Sub s3://${S3ConfigFileBucket}/config.yml
+        ElasticServerlessForwarderSSMSecrets: !Ref ElasticSecret
+        ElasticServerlessForwarderKMSKeys: !Sub
+          - '${ElasticSQSKMSKey},${ElasticSSMSecretEncryptionKey}'
+          - ElasticSQSKMSKey: !GetAtt ElasticSQSKMSKey.Arn
+            ElasticSSMSecretEncryptionKey: !GetAtt ElasticSSMSecretEncryptionKey.Arn
+        ElasticServerlessForwarderSQSEvents: ""   
+        ElasticServerlessForwarderS3SQSEvents: !If
+          - ShouldIncludeSecurityLakeSQSArn
+          - !Sub
+              - '${ElbSQSArn},${ElasticS3SQSArn},${VPCFlowLogsElasticSQSArn},${ElasticCloudTrailSQSArn},${ElasticWafSQSArn},${EmrSQSArn},${NfSQSArn},${ElasticCloudfrontSQSArn},${SecurityLakeSQSArn},${ElasticGuardDutySQSArn}'
+              - ElbSQSArn: !GetAtt ElbSQS.Arn
+                ElasticS3SQSArn: !GetAtt ElasticS3SQS.Arn
+                VPCFlowLogsElasticSQSArn: !GetAtt VPCFlowLogsElasticSQS.Arn
+                ElasticCloudTrailSQSArn: !GetAtt ElasticCloudTrailSQS.Arn
+                ElasticWafSQSArn: !GetAtt ElasticWafSQS.Arn
+                EmrSQSArn: !GetAtt EmrSQS.Arn
+                NfSQSArn: !GetAtt NfSQS.Arn
+                ElasticCloudfrontSQSArn: !GetAtt ElasticCloudfrontSQS.Arn
+                SecurityLakeSQSArn: !Ref SecurityLakeSQSArn
+                ElasticGuardDutySQSArn: !GetAtt ElasticGuardDutySQS.Arn
+          - !Sub
+              - '${ElbSQSArn},${ElasticS3SQSArn},${VPCFlowLogsElasticSQSArn},${ElasticCloudTrailSQSArn},${ElasticWafSQSArn},${EmrSQSArn},${NfSQSArn},${ElasticCloudfrontSQSArn},${ElasticGuardDutySQSArn}'
+              - ElbSQSArn: !GetAtt ElbSQS.Arn
+                ElasticS3SQSArn: !GetAtt ElasticS3SQS.Arn
+                VPCFlowLogsElasticSQSArn: !GetAtt VPCFlowLogsElasticSQS.Arn
+                ElasticCloudTrailSQSArn: !GetAtt ElasticCloudTrailSQS.Arn
+                ElasticWafSQSArn: !GetAtt ElasticWafSQS.Arn
+                EmrSQSArn: !GetAtt EmrSQS.Arn
+                NfSQSArn: !GetAtt NfSQS.Arn
+                ElasticCloudfrontSQSArn: !GetAtt ElasticCloudfrontSQS.Arn
+                ElasticGuardDutySQSArn: !GetAtt ElasticGuardDutySQS.Arn
+        ElasticServerlessForwarderKinesisEvents: !If
+          - ShouldIngestKinesisDataStream
+          - Fn::Join: [',', !Ref KinesisDataStreamArn]
+          - "" 
+        ElasticServerlessForwarderCloudWatchLogsEvents: !If
+          - ShouldIngestCloudWatchLogs
+          - Fn::Join: [',', !Ref CloudWatchLogGroupArns]
+          - "" 
+        ElasticServerlessForwarderS3Buckets: !If
+          - ShouldIncludeSecurityLakeBucketArn
+          - !Sub
+              - '${ElbCentralLoggingBucketArn},${S3AccessLoggingBucketArn},${VPCFlowLoggingBucketArn},${CloudTrailBucketARN},${WafCentralLoggingBucketArn},${EmrCentralLoggingBucketArn},${NfCentralLoggingBucketArn},${CloudfrontLoggingBucketArn},${SecurityLakeBucketArn},${GuardDutyArchiveLoggingBucketArn}'
+              - ElbCentralLoggingBucketArn: !GetAtt ElbCentralLoggingBucket.Arn
+                S3AccessLoggingBucketArn: !GetAtt S3AccessLoggingBucket.Arn
+                VPCFlowLoggingBucketArn: !GetAtt VPCFlowLoggingBucket.Arn
+                CloudTrailBucketArn: !Ref CloudTrailBucketARN
+                WafCentralLoggingBucketArn: !GetAtt WafCentralLoggingBucket.Arn
+                EmrCentralLoggingBucketArn: !GetAtt EmrCentralLoggingBucket.Arn
+                NfCentralLoggingBucketArn: !GetAtt NfCentralLoggingBucket.Arn
+                CloudfrontLoggingBucketArn: !GetAtt CloudfrontLoggingBucket.Arn
+                SecurityLakeBucketArn: !Ref SecurityLakeBucketArn
+                GuardDutyArchiveLoggingBucketArn: !GetAtt GuardDutyArchiveLoggingBucket.Arn
+          - !Sub
+              - '${ElbCentralLoggingBucketArn},${S3AccessLoggingBucketArn},${VPCFlowLoggingBucketArn},${CloudTrailBucketARN},${WafCentralLoggingBucketArn},${EmrCentralLoggingBucketArn},${NfCentralLoggingBucketArn},${CloudfrontLoggingBucketArn},${GuardDutyArchiveLoggingBucketArn}'
+              - ElbCentralLoggingBucketArn: !GetAtt ElbCentralLoggingBucket.Arn
+                S3AccessLoggingBucketArn: !GetAtt S3AccessLoggingBucket.Arn
+                VPCFlowLoggingBucketArn: !GetAtt VPCFlowLoggingBucket.Arn
+                CloudTrailBucketArn: !Ref CloudTrailBucketARN
+                WafCentralLoggingBucketArn: !GetAtt WafCentralLoggingBucket.Arn
+                EmrCentralLoggingBucketArn: !GetAtt EmrCentralLoggingBucket.Arn
+                NfCentralLoggingBucketArn: !GetAtt NfCentralLoggingBucket.Arn
+                CloudfrontLoggingBucketArn: !GetAtt CloudfrontLoggingBucket.Arn
+                GuardDutyArchiveLoggingBucketArn: !GetAtt GuardDutyArchiveLoggingBucket.Arn
+        ElasticServerlessForwarderSecurityGroups: !If
+            - ShouldDeployElasticForwarderInVPC
+            - !GetAtt ElasticForwarderSecurityGroup.GroupId
+            - ""  
+        ElasticServerlessForwarderSubnets: !If
+            - ShouldDeployElasticForwarderInVPC
+            - Fn::Join: [',', !Ref SubnetIds]
+            - ""  
+    DependsOn: 
+    - ElasticServerlessForwarderEventMacro
+    Metadata:
+      SamResourceId: ElasticServerlessForwarderApplication
+      
+  S3ConfigFileBucket:       # S3 Bucket for storing the config.yaml file.
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub aws-config-bucket-${AWS::AccountId}-${AWS::Region}      
+      VersioningConfiguration:
+        Status: Enabled
+
+  S3ConfigFileBucketPolicy:     # Bucket policy for S3ConfigFileBucket bucket which stores config.yaml file.
+    Type: AWS::S3::BucketPolicy
+    DependsOn: S3ConfigFileBucket
+    Properties:
+      Bucket: !Ref S3ConfigFileBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: AWSBucketPermissions
+            Action: 
+              - s3:PutObject
+              - s3:GetObject
+              - s3:DeleteObject
+              - s3:GetBucketAcl
+              - s3:ListBucket
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com 
+            Resource:
+              - Fn::Join:
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - Ref: 'S3ConfigFileBucket'
+                    - '/*'
+              - Fn::Join:
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - Ref: 'S3ConfigFileBucket'
+                    
+  ElasticBootstrapLambdaForConfigFile:      # Serverless function responsible for configuring the config.yaml file required for the Elastic serverless forwarder application.
+    Type: 'AWS::Serverless::Function'
+    DependsOn:
+    - S3ConfigFileBucketPolicy
+    Properties:
+      FunctionName: !Sub Elastic-BootStrap-Lambda-${AWS::AccountId}-${AWS::Region}
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt ElasticBootstrapLambdaExecutionRole.Arn
+      Runtime: python3.11
+      Timeout: 900
+      MemorySize: 128
+      CodeUri:
+        Bucket: bootstrap-lambda-code
+        Key: Standalone-code/ElasticBootstrapLambdaStandaloneAccount.zip
+      Environment:
+        Variables:
+          ELASTIC_SECRET_ARN: !Ref ElasticSecret
+          SQS_QUEUE_ARN: !If
+          - ShouldIncludeSecurityLakeSQSArn
+          - !Sub
+              - '${ElbSQSArn},${ElasticS3SQSArn},${VPCFlowLogsElasticSQSArn},${ElasticCloudTrailSQSArn},${ElasticWafSQSArn},${EmrSQSArn},${NfSQSArn},${ElasticCloudfrontSQSArn},${SecurityLakeSQSArn},${ElasticGuardDutySQSArn}'
+              - ElbSQSArn: !GetAtt ElbSQS.Arn
+                ElasticS3SQSArn: !GetAtt ElasticS3SQS.Arn
+                VPCFlowLogsElasticSQSArn: !GetAtt VPCFlowLogsElasticSQS.Arn
+                ElasticCloudTrailSQSArn: !GetAtt ElasticCloudTrailSQS.Arn
+                ElasticWafSQSArn: !GetAtt ElasticWafSQS.Arn
+                EmrSQSArn: !GetAtt EmrSQS.Arn
+                NfSQSArn: !GetAtt NfSQS.Arn
+                ElasticCloudfrontSQSArn: !GetAtt ElasticCloudfrontSQS.Arn
+                SecurityLakeSQSArn: !Ref SecurityLakeSQSArn
+                ElasticGuardDutySQSArn: !GetAtt ElasticGuardDutySQS.Arn
+          - !Sub
+              - '${ElbSQSArn},${ElasticS3SQSArn},${VPCFlowLogsElasticSQSArn},${ElasticCloudTrailSQSArn},${ElasticWafSQSArn},${EmrSQSArn},${NfSQSArn},${ElasticCloudfrontSQSArn},${ElasticGuardDutySQSArn}'
+              - ElbSQSArn: !GetAtt ElbSQS.Arn
+                ElasticS3SQSArn: !GetAtt ElasticS3SQS.Arn
+                VPCFlowLogsElasticSQSArn: !GetAtt VPCFlowLogsElasticSQS.Arn
+                ElasticCloudTrailSQSArn: !GetAtt ElasticCloudTrailSQS.Arn
+                ElasticWafSQSArn: !GetAtt ElasticWafSQS.Arn
+                EmrSQSArn: !GetAtt EmrSQS.Arn
+                NfSQSArn: !GetAtt NfSQS.Arn
+                ElasticCloudfrontSQSArn: !GetAtt ElasticCloudfrontSQS.Arn
+                ElasticGuardDutySQSArn: !GetAtt ElasticGuardDutySQS.Arn
+          S3_BUCKET_NAME: !Ref S3ConfigFileBucket
+          CloudTrail_S3_BUCKET_NAME: !Ref CloudTrailBucketName
+          CloudTrail_SQS_QUEUE_ARN: !GetAtt ElasticCloudTrailSQS.Arn
+          INGEST_CLOUDWATCH_LOGS: !Ref IngestCloudWatchLogs
+          CLOUDWATCH_LOG_GROUP_ARNS: !If
+            - ShouldIngestCloudWatchLogs
+            - Fn::Join: [',', !Ref CloudWatchLogGroupArns]
+            - ""  # Set to an empty string if ShouldIngestCloudWatchLogs is false  
+          INGEST_KINESIS_LOGS: !Ref IngestKinesisLogs
+          KINESIS_DATA_STREAM_ARNS: !If
+            - ShouldIngestKinesisDataStream
+            - Fn::Join: [',', !Ref KinesisDataStreamArn]
+            - ""  # Set to an empty string if ShouldIngestKinesisDataStream is false
+
+  ElasticBootstrapLambdaExecutionRole:      # IAM role for execution of Elastic Bootstrap Lambda function.
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Principal: 
+              Service: 
+              - "lambda.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Path: "/"
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        - 'arn:aws:iam::aws:policy/AmazonS3FullAccess'
+
+  ElasticBootstrapLambdaRolePolicy:     #  IAM policy attached to the Elastic Bootstrap Lambda execution role.
+    Type: 'AWS::IAM::Policy'
+    Properties: 
+      PolicyName: "ElasticBootstrapLambdaCustomPolicy"
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Action:
+            - "s3:PutObject"
+            - "s3:DeleteObject"
+            Resource: "*" 
+      Roles: 
+        - Ref: "ElasticBootstrapLambdaExecutionRole"
+
+  TriggersElasticBootstrapLambdaFunction:       # Custom resource to trigger the execution of the Elastic Bootstrap Lambda function.
+    Type: 'Custom::RunCode'
+    DependsOn: ElasticBootstrapLambdaForConfigFile
+    DeletionPolicy: Retain  # Add this line to specify the deletion policy
+    Properties:
+      ServiceToken: !GetAtt ElasticBootstrapLambdaForConfigFile.Arn
+      
+  ElasticSQSKMSKey:     # KMS key for encrypting Elastic SQS queue messages
+    Type: AWS::KMS::Key
+    Properties:
+      Description: Encrypt Elastic SQS queue messages
+      Enabled: true
+      EnableKeyRotation: true
+      KeyUsage: ENCRYPT_DECRYPT
+      PendingWindowInDays: 7
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: sqs-use
+        Statement:
+          - Sid: Key Admin Usage
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: 
+              - 'kms:*'
+            Resource: '*'
+          - Sid: s3-notifications
+            Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action:
+              - 'kms:GenerateDataKey*'
+              - 'kms:Decrypt'
+            Resource: '*'
+          - Sid: Elastic-Lambda-Permission
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - 'kms:GenerateDataKey*'
+              - 'kms:Decrypt'
+            Resource: '*'
+          - Sid: access-conditions
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Action:
+              - 'kms:GenerateDataKey*'
+              - 'kms:Decrypt'
+            Resource: '*'
+            Condition:
+              StringEquals:
+                aws:PrincipalOrgID:
+                  - !Ref AWSOrganizationID
+          - Sid: Allow GuardDuty to encrypt findings
+            Effect: Allow
+            Principal:
+              Service: guardduty.amazonaws.com
+            Action:
+              - 'kms:GenerateDataKey*'
+            Resource: '*'
+          - Sid: Allow use of the key by different accounts
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Action:
+              - 'kms:Encrypt'
+              - 'kms:Decrypt'
+              - 'kms:ReEncrypt*'
+              - 'kms:GenerateDataKey*'
+              - 'kms:DescribeKey'
+              - 'kms:CreateGrant'
+              - 'kms:ListGrants'
+              - 'kms:RevokeGrant'
+            Resource: '*'
+
+  ElasticSQSKMSKeyAlias:        # Alias for the Elastic SQS KMS key.
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/ElasticSQSKMSKey
+      TargetKeyId: !Ref ElasticSQSKMSKey
+      
+  ElasticSSMSecretEncryptionKey:     # AWS KMS Key for encrypting the secrets stored in the SSM Store.
+    Type: AWS::KMS::Key
+    Properties:
+      Description: Encrypt the secrets stored in the SSM Store.
+      Enabled: true
+      EnableKeyRotation: true
+      KeyUsage: ENCRYPT_DECRYPT
+      PendingWindowInDays: 7
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: sqs-use
+        Statement:
+          - Sid: Key Admin Usage
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: 
+              - 'kms:*'
+            Resource: '*'
+          - Sid: Elastic-Lambda-Permission
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - 'kms:GenerateDataKey*'
+              - 'kms:Decrypt'
+            Resource: '*'
+
+  ElasticSSMSecretKMSKeyAlias:      # Alias for the ElasticSSMSecretEncryptionKey.
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/ElasticSSMSecretEncryptionKey
+      TargetKeyId: !Ref ElasticSSMSecretEncryptionKey
+          
+  ServerlessLambdaRolePolicies:     # IAM policy attached to the serverless Lambda execution role.
+    Type: 'AWS::IAM::Policy'
+    Condition: ShouldDeployElasticForwarderInVPC
+    Properties: 
+      PolicyName: "ElasticBootstrapLambdaCustomPolicy"
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Action:
+            - "ec2:CreateSecurityGroup"
+            - "ec2:AuthorizeSecurityGroupIngress"
+            - "ec2:CreateVpcEndpoint"
+            - "ec2:DescribeVpcEndpoints"
+            - "route53:CreateHostedZone"
+            - "route53:ChangeResourceRecordSets"
+            - "route53:GetChange"
+            - "ec2:DescribeVpcs"
+            - "s3:PutObject"
+            - "route53:ListHostedZonesByName"
+            - "route53:ListHostedZonesByVPC"
+            Resource: "*" 
+      Roles: 
+        - Ref: "BootstrapLambdaExecutionRole"
+              
+  BootstrapLambdaExecutionRole:     # # IAM role for executing the ElasticServerlessBootstrap lambda function.
+    Type: 'AWS::IAM::Role'
+    Condition: ShouldDeployElasticForwarderInVPC
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Principal: 
+              Service: 
+              - "lambda.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Path: "/"
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+  
+  ElasticForwarderSecurityGroup:        # Security group for the Elastic serverless forwarder application.
+    Type: AWS::EC2::SecurityGroup
+    Condition: ShouldDeployElasticForwarderInVPC
+    Properties:
+      GroupDescription: Elastic SecurityGroup 
+      VpcId: !Ref VPCId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 9243
+          ToPort: 9243
+          CidrIp: 0.0.0.0/0
+      
+  ElasticServerlessBootstrapFunction:       # Serverless function for creating VPC endpoints if forwarder is deployed in a VPC.
+    Type: AWS::Serverless::Function
+    Condition: ShouldDeployElasticForwarderInVPC
+    Properties:
+      Handler: index.lambda_handler
+      Role: !GetAtt BootstrapLambdaExecutionRole.Arn
+      Runtime: python3.8
+      InlineCode: |
+            import boto3
+            import os
+            import uuid
+            import random
+            import string
+            import cfnresponse
+
+            def create_security_group(vpc_id, group_description):
+                # Generate a random suffix for the group name
+                random_suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+                group_name = f'ElasticProxySecurityGroup_{random_suffix}'
+                
+                ec2 = boto3.resource('ec2')
+                security_group = ec2.create_security_group(
+                    VpcId=vpc_id,
+                    GroupName=group_name,
+                    Description=group_description
+                )
+                security_group.authorize_ingress(
+                    IpProtocol='tcp',
+                    FromPort=443,
+                    ToPort=443,
+                    CidrIp='0.0.0.0/0'
+                )
+                security_group.authorize_ingress(
+                    IpProtocol='tcp',
+                    FromPort=9243,
+                    ToPort=9243,
+                    CidrIp='0.0.0.0/0'
+                )
+                return security_group.id
+
+            def extract_dns_entries(response):
+                # Check if 'VpcEndpoint' key is present in the response
+                vpc_endpoint_info = response.get('VpcEndpoint', {})
+
+                # Extract DNS entries from 'DnsEntries' in 'VpcEndpoint' info
+                dns_entries = vpc_endpoint_info.get('DnsEntries', [])
+
+                if not dns_entries:
+                    raise ValueError("VpcEndpoint DNS entries not found in the response.")
+
+                # Use the first DNS entry for creating the CNAME record
+                dns_name = dns_entries[0].get('DnsName')
+
+                if dns_name is not None:
+                    print("VPC Endpoint DNS Entry:", dns_name)
+                else:
+                    raise ValueError("VpcEndpoint DNS entry is None.")
+
+                return dns_name
+                
+            def check_vpc_endpoint_exists(vpc_id, service_name):
+                ec2 = boto3.client('ec2')
+                response = ec2.describe_vpc_endpoints(
+                    Filters=[
+                        {'Name': 'vpc-id', 'Values': [vpc_id]},
+                        {'Name': 'service-name', 'Values': [service_name]}
+                    ]
+                )
+                endpoints = response.get('VpcEndpoints', [])
+                return bool(endpoints)
+
+            def create_vpc_endpoint(vpc_id, subnet_ids, security_group_id, region, service_name):
+                ec2 = boto3.client('ec2', region_name=region)
+                response = ec2.create_vpc_endpoint(
+                    VpcId=vpc_id,
+                    ServiceName=service_name,
+                    SubnetIds=subnet_ids,
+                    VpcEndpointType='Interface',
+                    SecurityGroupIds=[security_group_id]
+                )
+                
+                # Ensure 'VpcEndpointId' is present in the response
+                vpc_endpoint_id = response.get('VpcEndpoint', {}).get('VpcEndpointId')
+                if not vpc_endpoint_id:
+                    raise ValueError("VpcEndpointId not found in the response.")
+
+                # Extract DNS entries from the response
+                dns_name = extract_dns_entries(response)
+
+                print("Create VPC Endpoint Response:", response)
+                return vpc_endpoint_id, dns_name
+                
+            def check_hosted_zone_exists(vpc_id, private_hosted_zone, region):
+                route53 = boto3.client('route53')
+                response = route53.list_hosted_zones_by_vpc(VPCId=vpc_id, VPCRegion=region)
+                
+                hosted_zones = response.get('HostedZoneSummaries', [])
+                print(hosted_zones)
+                
+                # Add a dot at the end of the private_hosted_zone name
+                hosted_zone_name = private_hosted_zone + '.' if not private_hosted_zone.endswith('.') else private_hosted_zone
+                
+                # Check if the hosted zone exists with the specified name
+                hosted_zone_present = any(zone['Name'] == hosted_zone_name for zone in hosted_zones)
+                print(hosted_zone_present)
+                
+                return hosted_zone_present
+
+            def create_hosted_zone(vpc_id, region, private_hosted_zone):
+                route53 = boto3.client('route53')
+                caller_reference = str(uuid.uuid4())
+                response = route53.create_hosted_zone(
+                    Name=private_hosted_zone,
+                    VPC={
+                        'VPCId': vpc_id,
+                        'VPCRegion': region
+                    },
+                    CallerReference=caller_reference
+                )
+                # Extract Hosted Zone Id
+                hosted_zone_id = response['HostedZone']['Id']
+                return hosted_zone_id
+
+            def create_cname_record(hosted_zone_id, region, dns_name):
+                try:
+                    print("Debug - VPC Endpoint DNS Entry:", dns_name)
+
+                    if dns_name is not None and isinstance(dns_name, str):
+                        route53 = boto3.client('route53')
+                        response = route53.change_resource_record_sets(
+                            HostedZoneId=hosted_zone_id,
+                            ChangeBatch={
+                                'Changes': [
+                                    {
+                                        'Action': 'CREATE',
+                                        'ResourceRecordSet': {
+                                            'Name': f'*.{region}.aws.found.io',
+                                            'Type': 'CNAME',
+                                            'TTL': 60,
+                                            'ResourceRecords': [
+                                                {
+                                                    'Value': dns_name
+                                                }
+                                            ]
+                                        }
+                                    }
+                                ]
+                            }
+                        )
+                        # Print the response for debugging purposes
+                        print(response)
+                        print("Debug - CNAME Record created successfully.")
+                    else:
+                        print("Warning: VpcEndpoint DNS entry is None or not in the expected format.")
+                except Exception as e:
+                    print(f"Error creating CNAME record: {e}")
+                    raise
+                    
+            def check_s3_gateway_endpoint_exists(vpc_id, region):
+                ec2 = boto3.client('ec2', region_name=region)
+                response = ec2.describe_vpc_endpoints(
+                    Filters=[
+                        {'Name': 'vpc-id', 'Values': [vpc_id]},
+                        {'Name': 'service-name', 'Values': ['com.amazonaws.' + region + '.s3']}
+                    ]
+                )
+                endpoints = response.get('VpcEndpoints', [])
+                return bool(endpoints)
+                    
+            def create_s3_gateway_endpoint(vpc_id, route_table_id, region):
+                ec2_client = boto3.client('ec2', region_name=region)
+
+                response = ec2_client.create_vpc_endpoint(
+                    VpcId=vpc_id,
+                    ServiceName=f'com.amazonaws.{region}.s3',
+                    VpcEndpointType='Gateway',
+                    RouteTableIds=route_table_id
+                )
+
+                return response
+                
+            def check_sqs_interface_endpoint_exists(vpc_id, region):
+                ec2 = boto3.client('ec2', region_name=region)
+                response = ec2.describe_vpc_endpoints(
+                    Filters=[
+                        {'Name': 'vpc-id', 'Values': [vpc_id]},
+                        {'Name': 'service-name', 'Values': ['com.amazonaws.' + region + '.sqs']}
+                    ]
+                )
+                endpoints = response.get('VpcEndpoints', [])
+                return bool(endpoints)
+
+            def create_sqs_interface_endpoint(vpc_id, subnet_ids, security_group_id, region):
+                client = boto3.client('ec2', region_name=region)
+
+                response = client.create_vpc_endpoint(
+                    VpcId=vpc_id,
+                    ServiceName=f'com.amazonaws.{region}.sqs',
+                    VpcEndpointType='Interface',
+                    SubnetIds=subnet_ids,
+                    SecurityGroupIds=[security_group_id]
+                )
+
+                return response
+                
+            def check_secretmanager_interface_endpoint_exists(vpc_id, region):
+                ec2 = boto3.client('ec2', region_name=region)
+                response = ec2.describe_vpc_endpoints(
+                    Filters=[
+                        {'Name': 'vpc-id', 'Values': [vpc_id]},
+                        {'Name': 'service-name', 'Values': ['com.amazonaws.' + region + '.secretsmanager']}
+                    ]
+                )
+                endpoints = response.get('VpcEndpoints', [])
+                return bool(endpoints)
+
+            def create_secretmanager_interface_endpoint(vpc_id, subnet_ids, security_group_id, region):
+                client = boto3.client('ec2', region_name=region)
+
+                response = client.create_vpc_endpoint(
+                    VpcId=vpc_id,
+                    ServiceName=f'com.amazonaws.{region}.secretsmanager',
+                    VpcEndpointType='Interface',
+                    SubnetIds=subnet_ids,
+                    SecurityGroupIds=[security_group_id]
+                )
+
+                return response
+                
+            def check_kms_interface_endpoint_exists(vpc_id, region):
+                ec2 = boto3.client('ec2', region_name=region)
+                response = ec2.describe_vpc_endpoints(
+                    Filters=[
+                        {'Name': 'vpc-id', 'Values': [vpc_id]},
+                        {'Name': 'service-name', 'Values': ['com.amazonaws.' + region + '.kms']}
+                    ]
+                )
+                endpoints = response.get('VpcEndpoints', [])
+                return bool(endpoints)
+
+            def create_kms_interface_endpoint(vpc_id, subnet_ids, security_group_id, region):
+                client = boto3.client('ec2', region_name=region)
+
+                response = client.create_vpc_endpoint(
+                    VpcId=vpc_id,
+                    ServiceName=f'com.amazonaws.{region}.kms',
+                    VpcEndpointType='Interface',
+                    SubnetIds=subnet_ids,
+                    SecurityGroupIds=[security_group_id]
+                )
+
+                return response
+                
+            def check_kinesis_interface_endpoint_exists(vpc_id, region):
+                ec2 = boto3.client('ec2', region_name=region)
+                response = ec2.describe_vpc_endpoints(
+                    Filters=[
+                        {'Name': 'vpc-id', 'Values': [vpc_id]},
+                        {'Name': 'service-name', 'Values': ['com.amazonaws.' + region + '.kinesis-streams']}
+                    ]
+                )
+                endpoints = response.get('VpcEndpoints', [])
+                return bool(endpoints)
+
+            def create_kinesis_data_stream_interface_endpoint(vpc_id, subnet_ids, security_group_id, region):
+                client = boto3.client('ec2', region_name=region)
+
+                response = client.create_vpc_endpoint(
+                    VpcId=vpc_id,
+                    ServiceName=f'com.amazonaws.{region}.kinesis-streams',
+                    VpcEndpointType='Interface',
+                    SubnetIds=subnet_ids,
+                    SecurityGroupIds=[security_group_id]
+                )
+
+                return response
+            
+            def check_cw_logs_interface_endpoint_exists(vpc_id, region):
+                ec2 = boto3.client('ec2', region_name=region)
+                response = ec2.describe_vpc_endpoints(
+                    Filters=[
+                        {'Name': 'vpc-id', 'Values': [vpc_id]},
+                        {'Name': 'service-name', 'Values': ['com.amazonaws.' + region + '.logs']}
+                    ]
+                )
+                endpoints = response.get('VpcEndpoints', [])
+                return bool(endpoints)
+
+            def create_cw_logs_interface_endpoint(vpc_id, subnet_ids, security_group_id, region):
+                client = boto3.client('ec2', region_name=region)
+
+                response = client.create_vpc_endpoint(
+                    VpcId=vpc_id,
+                    ServiceName=f'com.amazonaws.{region}.logs',
+                    VpcEndpointType='Interface',
+                    SubnetIds=subnet_ids,
+                    SecurityGroupIds=[security_group_id]
+                )
+
+                return response
+
+            def lambda_handler(event, context):
+                vpc_id = os.getenv('VPC_ID')
+                subnet_ids = os.getenv('SUBNET_IDS').split(',')
+                route_table_id = os.getenv('ROUTE_TABLE_ID').split(',')
+                region = os.getenv('REGION')
+                service_name = os.getenv('ServiceName')
+                private_hosted_zone = os.getenv('Private_Hosted_Zone')
+                responseData = {}
+           
+                
+                try:
+                    security_group_id = create_security_group(vpc_id, 'Elastic Proxy SecurityGroup')
+                    # Check if VPC endpoint already exists
+                    if not check_vpc_endpoint_exists(vpc_id, service_name):
+                        # VPC endpoint doesn't exist, create it
+                        vpc_endpoint_id, dns_name = create_vpc_endpoint(vpc_id, subnet_ids, security_group_id, region, service_name)
+                    else:
+                        print(f"VPC endpoint for service {service_name} already exists in VPC {vpc_id}. Skipping creation.")
+                        dns_name = None
+                   
+                    # Check if hosted zone already exists
+                    if not check_hosted_zone_exists(vpc_id, private_hosted_zone, region):
+                        # Hosted zone doesn't exist, create it
+                        hosted_zone_id = create_hosted_zone(vpc_id, region, private_hosted_zone)
+                        # Use the DNS name obtained from create_vpc_endpoint function
+                        if dns_name is not None:
+                            create_cname_record(hosted_zone_id, region, dns_name)
+                        else:
+                            print("VpcEndpoint DNS entry is None.")
+                    else:
+                        print("Hosted zone already exists. Skipping creation.")
+
+                    # Check if S3 Gateway endpoint already exists
+                    if not check_s3_gateway_endpoint_exists(vpc_id, region):
+                        # S3 Gateway endpoint doesn't exist, create it
+                        s3_response = create_s3_gateway_endpoint(vpc_id, route_table_id, region)
+                        print("S3 Gateway VPC Endpoint created successfully:")
+                        print(s3_response)
+                    else:
+                        print("S3 Gateway endpoint already exists. Skipping creation.")
+
+                    # Check if SQS Interface endpoint already exists
+                    if not check_sqs_interface_endpoint_exists(vpc_id, region):
+                        # SQS Interface endpoint doesn't exist, create it
+                        sqs_response = create_sqs_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
+                        print("SQS Interface VPC Endpoint created successfully:")
+                        print(sqs_response)
+                    else:
+                        print("SQS Interface endpoint already exists. Skipping creation.")
+
+                    # Check if Secret Manager Interface endpoint already exists
+                    if not check_secretmanager_interface_endpoint_exists(vpc_id, region):
+                        # Secret Manager Interface endpoint doesn't exist, create it
+                        ssm_response = create_secretmanager_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
+                        print("Secret Manager Interface VPC Endpoint created successfully:")
+                        print(ssm_response)
+                    else:
+                        print("Secret Manager Interface endpoint already exists. Skipping creation.")
+
+                    # Check if KMS Interface endpoint already exists
+                    if not check_kms_interface_endpoint_exists(vpc_id, region):
+                        # KMS Interface endpoint doesn't exist, create it
+                        kms_response = create_kms_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
+                        print("Key Management Service Interface VPC Endpoint created successfully:")
+                        print(kms_response)
+                    else:
+                        print("KMS Interface endpoint already exists. Skipping creation.")
+                        
+                    # Check if user wants to ingest Kinesis logs based on a parameter
+                    ingest_kinesis_logs = os.getenv('INGEST_KINESIS_LOGS', 'No').strip().lower()
+
+                    if ingest_kinesis_logs == 'yes':
+                        # Create Kinesis datastream Interface VPC endpoint
+                        if not check_kinesis_interface_endpoint_exists(vpc_id, region):
+                            kinesis_response = create_kinesis_data_stream_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
+                            print("Kinesis Data Stream VPC Endpoint created successfully:")
+                            print(kinesis_response)
+                        else:
+                            print("Kinesis Data Stream Interface endpoint already exists. Skipping creation.")
+                    else:
+                        print("Not creating Kinesis Data Stream endpoint.")
+                        
+                    # Check if user wants to ingest Cloudwatch logs based on a parameter
+                    ingest_cloudwatch_logs = os.getenv('INGEST_CLOUDWATCH_LOGS', 'No').strip().lower()
+
+                    if ingest_cloudwatch_logs == 'yes':
+                        # Create Cloudwatch Log Interface VPC endpoint
+                        if not check_cw_logs_interface_endpoint_exists(vpc_id, region):
+                            logs_response = create_cw_logs_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
+                            print("CloudWatch Logs Interface VPC Endpoint created successfully:")
+                            print(logs_response)
+                        else:
+                            print("CloudWatch Logs Interface endpoint already exists. Skipping creation.")
+                    else:
+                        print("Not creating Kinesis Data Stream endpoint.")
+                    
+                    cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+                except Exception as e:
+                    # Send a failure response with the error reason
+                    cfnresponse.send(event, context, cfnresponse.FAILED, responseData, reason=str(e))
+      Timeout: 900
+      Environment:
+        Variables:
+          VPC_ID: !Ref VPCId
+          SUBNET_IDS: !Join [',', !Ref SubnetIds]
+          ServiceName: 
+            !FindInMap 
+              - VPCServiceName
+              - !Ref 'AWS::Region'
+              - service
+          Private_Hosted_Zone:
+            !FindInMap 
+              - PrivateHostedZoneDNSName
+              - !Ref 'AWS::Region'
+              - HostedZone
+          REGION: !Sub ${AWS::Region}
+          ROUTE_TABLE_ID: !Join [',', !Ref RouteTableIds]
+          INGEST_KINESIS_LOGS: !Ref IngestKinesisLogs
+          INGEST_CLOUDWATCH_LOGS: !Ref IngestCloudWatchLogs
+    
+  TriggersBootstrapLambda:      # Custom resource to trigger the execution of the Elastic Serverless Bootstrap Lambda function.
+    Type: 'Custom::RunCode'
+    Condition: ShouldDeployElasticForwarderInVPC
+    DeletionPolicy: Retain
+    DependsOn: ElasticServerlessBootstrapFunction
+    Properties:
+      ServiceToken: !GetAtt ElasticServerlessBootstrapFunction.Arn
+      
+  KinesisFireHose:      # AWS Kinesis Firehose Delivery Stream for ingesting logs data.
+    Type: AWS::KinesisFirehose::DeliveryStream
+    Condition: ShouldIngestLogsViaKinesisFireHose
+    DependsOn: KinesisFireHoseBackupBucket
+    Properties:
+      DeliveryStreamType: DirectPut   
+      HttpEndpointDestinationConfiguration:
+        EndpointConfiguration:
+          AccessKey: !Ref ElasticAPIKey
+          Name: "Elastic"
+          Url: !Ref ElasticEndpointURL
+        RequestConfiguration:
+          ContentEncoding: GZIP
+          CommonAttributes:
+            - AttributeName: es_datastream_name
+              AttributeValue: !Ref KinesisFireHoseDataStreamTag
+        BufferingHints:
+          IntervalInSeconds: 60
+          SizeInMBs: 1
+        RoleARN: !GetAtt KinesisFireHoseRole.Arn
+        RetryOptions:
+          DurationInSeconds: 300
+        CloudWatchLoggingOptions:
+          Enabled: true
+          LogGroupName: !Ref FireHoseLogGroup
+          LogStreamName: !Ref DestinationErrorLogStream
+        S3BackupMode: FailedDataOnly
+        S3Configuration:
+          BucketARN: !Sub "arn:aws:s3:::${KinesisFireHoseBackupBucket}"
+          CompressionFormat: UNCOMPRESSED
+          RoleARN: !GetAtt KinesisFireHoseRole.Arn
+          
+  KinesisFireHoseRole:      # IAM Role for Kinesis Firehose Delivery Stream.
+    Type: 'AWS::IAM::Role'      
+    Condition: ShouldIngestLogsViaKinesisFireHose
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Principal: 
+              Service: 
+              - "firehose.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Path: "/"
+
+  KinesisFireHoseRolePolicies:      # IAM Policy for Kinesis Firehose Delivery Stream role, providing permissions to access S3 bucket.
+    Type: 'AWS::IAM::Policy'
+    Condition: ShouldIngestLogsViaKinesisFireHose
+    Properties:
+      PolicyName: KinesisFireHoseAccessS3
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Action:
+            - "s3:AbortMultipartUpload"
+            - "s3:GetBucketLocation"
+            - "s3:GetObject"
+            - "s3:ListBucket"
+            - "s3:ListBucketMultipartUploads"
+            - "s3:PutObject"
+            Resource:
+            - !Sub "arn:aws:s3:::${KinesisFireHoseBackupBucket}/*"
+            - !Sub "arn:aws:s3:::${KinesisFireHoseBackupBucket}"
+      Roles: 
+        - Ref: "KinesisFireHoseRole"
+        
+  FireHoseLogGroup:     # AWS CloudWatch Logs LogGroup for storing logs related to the Kinesis Firehose.
+    Type: "AWS::Logs::LogGroup"
+    Condition: ShouldIngestLogsViaKinesisFireHose
+    Properties:
+      RetentionInDays: 1
+
+  DestinationErrorLogStream:        # AWS CloudWatch Logs LogStream for storing destination delivery errors related to the Kinesis Firehose.
+    Type: "AWS::Logs::LogStream"
+    Condition: ShouldIngestLogsViaKinesisFireHose
+    Properties:
+      LogGroupName: !Ref FireHoseLogGroup
+      LogStreamName: "DestinationDelivery"
+      
+  KinesisFireHoseBackupBucket:       # S3 Bucket to store the failed data from Kinesis Firehose.
+    Type: AWS::S3::Bucket
+    Condition: ShouldIngestLogsViaKinesisFireHose
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub elastic-kinesisfirehose-backup-${AWS::AccountId}-${AWS::Region}     
+      VersioningConfiguration:
+        Status: Enabled
+
+  KinesisFireHoseBackupBucketPolicy:        # S3 Bucket Policy for Kinesis Firehose Backup Bucket, providing permissions for Kinesis Firehose service.
+    Type: AWS::S3::BucketPolicy
+    DependsOn: KinesisFireHoseBackupBucket
+    Condition: ShouldIngestLogsViaKinesisFireHose
+    Properties:
+      Bucket: !Ref KinesisFireHoseBackupBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: KinesisFireHoseBackupBucketPermissions
+            Action:
+              - s3:PutObject
+              - s3:GetBucketAcl
+              - s3:ListBucket
+            Effect: Allow
+            Principal:
+              Service:
+                - firehose.amazonaws.com 
+            Resource:
+              - Fn::Join:
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - Ref: 'KinesisFireHoseBackupBucket'
+                    - '/*'
+              - Fn::Join:
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - Ref: 'KinesisFireHoseBackupBucket'
+                    
+  ElasticAgentLambdaRolePolicy:     # IAM Policy for Elastic Agent Lambda Execution Role.
+    Type: 'AWS::IAM::Policy'
+    Condition: ShouldIngestEC2InstanceLogs
+    Properties: 
+      PolicyName: "ElasticAgentLambdaRolePolicy"
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Action:
+            - "cloudformation:CreateStack"
+            - "ec2:*"
+            - "ssm:PutParameter"
+            - "s3:GetObject"
+            - "s3:PutObject"
+            Resource: "*" 
+      Roles: 
+        - Ref: "ElasticAgentLambdaExecutionRole"
+              
+  ElasticAgentLambdaExecutionRole:      # IAM Role for execution of Elastic Agent Lambda function.
+    Type: 'AWS::IAM::Role'
+    Condition: ShouldIngestEC2InstanceLogs
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Principal: 
+              Service: 
+              - "lambda.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Path: "/"
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        
+  ElasticAgentLambdaFunction:       # Serverless function responsible for deploying cloudformation stack which creates EC2 instance with elastic agent installed.
+    Type: AWS::Serverless::Function
+    Condition: ShouldIngestEC2InstanceLogs
+    Properties:
+      Handler: index.lambda_handler
+      Role: !GetAtt ElasticAgentLambdaExecutionRole.Arn
+      Runtime: python3.9
+      InlineCode: |
+            import boto3
+            import os
+            import botocore
+            import json
+            import uuid
+            import random
+            import string
+            import cfnresponse
+
+            def lambda_handler(event, context):
+                
+                responseData = {}                
+                # Generate a random suffix adhering to the CloudFormation stack name pattern
+                random_suffix = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
+
+                # Combine the suffix with a prefix adhering to the pattern (e.g., "Elastic-Agent-")
+                stack_name = 'Elastic-Agent-' + random_suffix
+                
+                # Replace these values with your own
+                s3_bucket = 'elastic-proxy'
+                path = 'elastic-ec2-log-ingestion.json'
+                stack_name = stack_name
+
+                # Extract parameters from the Lambda input
+                kibana_url = os.getenv('KibanaURL')
+                elasticsearch_username = os.getenv('ELASTICSEARCHUSERNAME')
+                elasticsearch_password = os.getenv('ELASTICSEARCHPASSWORD')
+                elasticsearch_deploymentid = os.getenv('ElasticSearchDeploymentID')
+                elasticsearch_deploymentversion = os.getenv('DeploymentVersion')
+                region = os.getenv('REGION')
+                ami_id = os.getenv('AMIID')
+
+                # Set up Boto3 clients
+                s3_client = boto3.client('s3', region_name=region)
+                cloudformation_client = boto3.client('cloudformation', region_name=region)
+                
+                # Fetch the CloudFormation Template from S3
+                try:
+                    response = s3_client.get_object(Bucket=s3_bucket, Key=path)
+                    template_body = response['Body'].read().decode('utf-8')
+                except botocore.exceptions.ClientError as e:
+                    print(f"Error fetching template from S3: {e}")
+                    return {
+                        'statusCode': 500,
+                        'body': json.dumps('Error fetching template from S3')
+                    }
+                
+                # Deploy the CloudFormation Template
+                try:
+                    response = cloudformation_client.create_stack(
+                        StackName=stack_name,
+                        TemplateBody=template_body,
+                        Parameters=[
+                            {'ParameterKey': 'KibanaURL', 'ParameterValue': kibana_url},
+                            {'ParameterKey': 'AMIID', 'ParameterValue': ami_id},
+                            {'ParameterKey': 'ELASTICSEARCHUSERNAME', 'ParameterValue': elasticsearch_username},
+                            {'ParameterKey': 'ELASTICSEARCHPASSWORD', 'ParameterValue': elasticsearch_password},
+                            {'ParameterKey': 'ElasticSearchDeploymentID', 'ParameterValue': elasticsearch_deploymentid},
+                            {'ParameterKey': 'DeploymentVersion', 'ParameterValue': elasticsearch_deploymentversion},
+                        ],
+                        Capabilities=['CAPABILITY_NAMED_IAM']  # Add capabilities if needed
+                    )
+                    print(f"Stack {stack_name} creation initiated. Stack ID: {response['StackId']}")
+                except botocore.exceptions.ClientError as e:
+                    print(f"Error deploying CloudFormation Template: {e}")
+                    # Send a failure response with the error reason
+                    cfnresponse.send(event, context, cfnresponse.FAILED, responseData, reason=str(e))
+    
+                print("CloudFormation Template deployed successfully.")
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)        
+      Timeout: 900
+      Environment:
+        Variables:
+          AMIID: 
+            !FindInMap 
+              - AMIID
+              - !Ref 'AWS::Region'
+              - ami
+          REGION: !Sub ${AWS::Region}
+          KibanaURL: !Ref KibanaURL
+          ELASTICSEARCHUSERNAME: !Ref ElasticsearchUsername
+          ELASTICSEARCHPASSWORD: !Ref ElasticsearchPassword
+          ElasticSearchDeploymentID: !Ref ElasticSearchDeploymentID
+          DeploymentVersion: !Ref DeploymentVersion
+          
+  TriggersElasticAgentLambdaFunction:       # Custom resource to trigger the execution of the Elastic Agent Lambda function.
+    Type: 'Custom::RunCode'
+    Condition: ShouldIngestEC2InstanceLogs
+    DeletionPolicy: Retain
+    DependsOn: ElasticAgentLambdaFunction
+    Properties:
+      ServiceToken: !GetAtt ElasticAgentLambdaFunction.Arn
