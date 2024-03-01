@@ -641,6 +641,7 @@ Resources:
                   - !Sub "arn:aws:s3:::elastic-central-cloudfront-access-logs-${AWS::AccountId}-${AWS::Region}"
                   
   S3AccessLoggingBucket:        # S3 bucket for centralized S3 access logs
+    DeletionPolicy: Retain
     DependsOn: ElasticS3SQSPolicy
     Type: AWS::S3::Bucket
     Properties:
@@ -687,6 +688,7 @@ Resources:
   VPCFlowLoggingBucket:     # S3 bucket for centralized VPC flow logs
     Type: AWS::S3::Bucket
     DependsOn: S3AccessLoggingBucket
+    DeletionPolicy: Retain
     Properties:
       BucketName: !Sub elastic-central-vpcflow-logging-${AWS::AccountId}-${AWS::Region}
       VersioningConfiguration:
@@ -739,6 +741,7 @@ Resources:
       - ElbSQSPolicy
       - S3AccessLoggingBucket
     Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
     Properties:
       BucketName: !Sub elastic-central-elb-access-logs-${AWS::AccountId}-${AWS::Region}
       VersioningConfiguration:
@@ -817,6 +820,7 @@ Resources:
       - "S3AccessLoggingBucket"
       - "ElasticWafSQSPolicy"
     Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
     Properties:
       BucketName:
         Fn::Sub: "elastic-central-waf-access-logs-${AWS::AccountId}-${AWS::Region}"
@@ -899,6 +903,7 @@ Resources:
       - EmrSQSPolicy
       - S3AccessLoggingBucket
     Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
     Properties:
       BucketName: !Sub elastic-central-emr-access-logs-${AWS::AccountId}-${AWS::Region}
       VersioningConfiguration:
@@ -976,6 +981,7 @@ Resources:
       - NfSQSPolicy
       - S3AccessLoggingBucket
     Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
     Properties:
       BucketName: !Sub elastic-central-nf-access-logs-${AWS::AccountId}-${AWS::Region}
       VersioningConfiguration:
@@ -1053,6 +1059,7 @@ Resources:
       - ElasticCloudfrontSQSPolicy
       - S3AccessLoggingBucket
     Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
     Properties:
       BucketName: !Sub elastic-central-cloudfront-access-logs-${AWS::AccountId}-${AWS::Region}
       VersioningConfiguration:
@@ -1160,6 +1167,7 @@ Resources:
   GuardDutyArchiveLoggingBucket:        #  S3 bucket for centralized GuardDuty logs collection.
     DependsOn: ElasticGuardDutySQSPolicy
     Type: 'AWS::S3::Bucket'
+    DeletionPolicy: Retain
     Properties:
       BucketName: !Sub 'elastic-central-guardduty-access-logs-${AWS::AccountId}-${AWS::Region}'
       VersioningConfiguration:
@@ -1257,7 +1265,7 @@ Resources:
         ElasticServerlessForwarderKinesisEvents: !If
           - ShouldIngestKinesisDataStream
           - Fn::Join: [',', !Ref KinesisDataStreamArn]
-          - "" 
+          - ""
         ElasticServerlessForwarderCloudWatchLogsEvents: !If
           - ShouldIngestCloudWatchLogs
           - Fn::Join: [',', !Ref CloudWatchLogGroupArns]
@@ -1905,7 +1913,31 @@ Resources:
                 )
 
                 return response
+                
+            def create_ec2_interface_endpoint(vpc_id, subnet_ids, security_group_id, region):
+                client = boto3.client('ec2', region_name=region)
 
+                response = client.create_vpc_endpoint(
+                    VpcId=vpc_id,
+                    ServiceName=f'com.amazonaws.{region}.ec2',
+                    VpcEndpointType='Interface',
+                    SubnetIds=subnet_ids,
+                    SecurityGroupIds=[security_group_id]
+                )
+
+                return response
+
+            def check_ec2_interface_endpoint_exists(vpc_id, region):
+                ec2 = boto3.client('ec2', region_name=region)
+                response = ec2.describe_vpc_endpoints(
+                    Filters=[
+                        {'Name': 'vpc-id', 'Values': [vpc_id]},
+                        {'Name': 'service-name', 'Values': ['com.amazonaws.' + region + '.ec2']}
+                    ]
+                )
+                endpoints = response.get('VpcEndpoints', [])
+                return bool(endpoints)
+            
             def lambda_handler(event, context):
                 vpc_id = os.getenv('VPC_ID')
                 subnet_ids = os.getenv('SUBNET_IDS').split(',')
@@ -2000,7 +2032,19 @@ Resources:
                         else:
                             print("CloudWatch Logs Interface endpoint already exists. Skipping creation.")
                     else:
-                        print("Not creating Kinesis Data Stream endpoint.")
+                        print("Not creating CloudWatch Logs endpoint.")
+                        
+                    if ingest_cloudwatch_logs == 'yes':
+                        # Check if EC2 interface endpoint already exists
+                        if not check_ec2_interface_endpoint_exists(vpc_id, region):
+                            # Create EC2 Interface VPC endpoint since Cloudwatch Logs is being ingested
+                            ec2_response = create_ec2_interface_endpoint(vpc_id, subnet_ids, security_group_id, region)
+                            print("EC2 Interface VPC Endpoint created successfully:")
+                            print(ec2_response)
+                        else:
+                            print("EC2 Interface endpoint already exists. Skipping creation.")
+                    else:
+                        print("Not creating EC2 endpoint.")
                     
                     cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
                 except Exception as e:
